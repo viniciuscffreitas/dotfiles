@@ -1,0 +1,4 @@
+# Dotfiles sync
+alias dotpush='cd ~/dotfiles && git add -A && git commit -m "config: update $(date +%Y-%m-%d)" && git push'
+alias dotpull='cd ~/dotfiles && git pull'
+alias dotcd='cd ~/dotfiles'
