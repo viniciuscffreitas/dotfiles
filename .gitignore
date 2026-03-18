@@ -1,0 +1,27 @@
+# Gerado localmente por install.sh
+claude/settings.json
+
+# Dados sensíveis — nunca commitar
+claude/memory/
+claude/cache/
+claude/statsig/
+claude/sessions/
+claude/history.jsonl
+claude/*.log
+claude/hook-approvals.log
+claude/debug/
+claude/downloads/
+claude/paste-cache/
+claude/shell-snapshots/
+claude/stats-cache.json
+claude/telemetry/
+claude/todos/
+claude/tasks/
+claude/ide/
+claude/ccline/
+
+# Secrets
+**/.env
+**/.env.local
+**/*.key
+**/*.pem
