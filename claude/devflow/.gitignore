@@ -1,0 +1,4 @@
+hooks/__pycache__/
+hooks/tests/__pycache__/
+state/
+.pytest_cache/

@@ -1,0 +1,247 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr list:*)",
+      "Bash(dart analyze:*)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web status)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web log main..HEAD --oneline)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web push -u origin feature/instant-photo-confirmation)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web pull --rebase origin feature/instant-photo-confirmation)",
+      "Skill(pr-review-toolkit:review-pr)",
+      "Bash(git push:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)",
+      "Bash(gh pr:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh run watch:*)",
+      "Bash(xargs:*)",
+      "WebSearch",
+      "Bash(gh run rerun:*)",
+      "Bash(git show:*)",
+      "Bash(gh workflow:*)",
+      "Bash(find:*)",
+      "Bash(mvn test:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)",
+      "Bash(/tmp/xlvenv/bin/pip install:*)",
+      "Bash(/tmp/xlvenv/bin/python3:*)",
+      "Bash(mvn compile:*)",
+      "Bash(./mvnw test:*)",
+      "Bash(mvn clean test:*)",
+      "Bash(docker info:*)",
+      "Bash(open:*)",
+      "Bash(dart run build_runner build:*)",
+      "Bash(git stash:*)",
+      "Bash(grep:*)",
+      "Bash(./mvnw compile test-compile:*)",
+      "Bash(ls:*)",
+      "mcp__plugin_linear_linear__list_teams",
+      "mcp__plugin_linear_linear__list_issues",
+      "Bash(mvn verify:*)",
+      "Bash(flutter build web:*)",
+      "Bash(gh repo list:*)",
+      "Bash(echo:*)",
+      "Bash(git -C __HOME__/Desktop/cb log --oneline -20)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web log --oneline -20)",
+      "Bash(cat:*)",
+      "Bash(flutter test:*)",
+      "Bash(flutter pub get:*)",
+      "Bash(./mvnw compile:*)",
+      "Bash(dart --version:*)",
+      "Bash(docker ps:*)",
+      "Bash(ssh:*)",
+      "Bash(mvn:*)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web checkout main)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web pull)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web checkout -b feat/p0-5-sse-reconnect-banner)",
+      "Bash(git -C __HOME__/Desktop/cisnebranco_web status --short lib/core/router/)",
+      "Bash(./gradlew compileJava:*)",
+      "Bash(__HOME__/Desktop/cb/gradlew compileJava:*)",
+      "Bash(git -C __HOME__/Desktop/cb add src/main/java/com/cisnebranco/dto/request/TechnicalOsFilterRequest.java src/main/java/com/cisnebranco/specification/TechnicalOsSpecification.java src/main/java/com/cisnebranco/service/TechnicalOsService.java src/main/java/com/cisnebranco/controller/TechnicalOsController.java)",
+      "Bash(git -C:*)",
+      "Bash(git -C __HOME__/Desktop/cb push -u origin feat/p2-16-os-history-per-pet)",
+      "Bash(git restore:*)",
+      "mcp__plugin_linear_linear__list_projects",
+      "Bash(git rebase:*)",
+      "Bash(done)",
+      "Bash(gh search:*)",
+      "mcp__plugin_linear_linear__get_team",
+      "Bash(npm install:*)",
+      "Bash(linear auth:*)",
+      "Bash(npx:*)",
+      "Bash(wc:*)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.local/share/dippy/bin/dippy-hook"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/devflow/hooks/pre_push_gate.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "# sounds.sh: soundsh/minecraft-villager-hmm\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-villager-hmm.mp3\""
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "# sounds.sh: soundsh/minecraft-hurt\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-hurt.mp3\""
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "# sounds.sh: soundsh/minecraft-eating\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-eating.mp3\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/devflow/hooks/file_checker.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/devflow/hooks/tdd_enforcer.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Write|Edit|MultiEdit|Bash|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/devflow/hooks/context_monitor.py"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/devflow/hooks/pre_compact.py"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/devflow/hooks/discovery_scan.py"
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/devflow/hooks/post_compact_restore.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/devflow/hooks/spec_stop_guard.py"
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "ccline",
+    "padding": 0
+  },
+  "enabledPlugins": {
+    "pr-review-toolkit@claude-plugins-official": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "swift-lsp@claude-plugins-official": true,
+    "linear@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "pr-review-toolkit@claude-code-plugins": true,
+    "firebase@firebase": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "firebase": {
+      "source": {
+        "source": "github",
+        "repo": "firebase/agent-skills"
+      }
+    }
+  },
+  "language": "Português Brasileiro",
+  "effortLevel": "medium",
+  "skipDangerousModePermissionPrompt": true,
+  "mcpServers": {
+    "mixpanel": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.mixpanel.com/mcp"
+      ]
+    }
+  },
+  "linear": {
+    "apiKey": "__LINEAR_API_KEY__"
+  }
+}

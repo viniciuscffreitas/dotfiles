@@ -19,9 +19,19 @@ claude/todos/
 claude/tasks/
 claude/ide/
 claude/ccline/
+claude/projects/
+claude/image-cache/
+claude/file-history/
+claude/session-env/
+claude/backups/
+claude/plugins/data/
+claude/plugins/install-counts-cache.json
 
 # Secrets
 **/.env
 **/.env.local
 **/*.key
 **/*.pem
+
+# macOS
+.DS_Store

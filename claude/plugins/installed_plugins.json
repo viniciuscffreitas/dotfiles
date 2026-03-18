@@ -1,0 +1,95 @@
+{
+  "version": 2,
+  "plugins": {
+    "pr-review-toolkit@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/claude-plugins-official/pr-review-toolkit/6b70f99f769f",
+        "version": "6b70f99f769f",
+        "installedAt": "2026-02-09T14:59:31.472Z",
+        "lastUpdated": "2026-03-18T13:40:12.526Z",
+        "gitCommitSha": "2cd88e7947b7382e045666abee790c7f55f669f3"
+      }
+    ],
+    "explanatory-output-style@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/claude-plugins-official/explanatory-output-style/6b70f99f769f",
+        "version": "6b70f99f769f",
+        "installedAt": "2026-02-14T15:22:30.634Z",
+        "lastUpdated": "2026-03-18T13:40:12.525Z",
+        "gitCommitSha": "2cd88e7947b7382e045666abee790c7f55f669f3"
+      }
+    ],
+    "swift-lsp@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/claude-plugins-official/swift-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-02-15T01:39:19.095Z",
+        "lastUpdated": "2026-02-15T01:39:19.095Z",
+        "gitCommitSha": "2cd88e7947b7382e045666abee790c7f55f669f3"
+      }
+    ],
+    "frontend-design@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/claude-plugins-official/frontend-design/6b70f99f769f",
+        "version": "6b70f99f769f",
+        "installedAt": "2026-02-17T01:17:57.658Z",
+        "lastUpdated": "2026-03-18T13:40:12.525Z",
+        "gitCommitSha": "2cd88e7947b7382e045666abee790c7f55f669f3"
+      }
+    ],
+    "linear@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/claude-plugins-official/linear/6b70f99f769f",
+        "version": "6b70f99f769f",
+        "installedAt": "2026-02-17T01:18:04.484Z",
+        "lastUpdated": "2026-03-18T13:40:12.524Z",
+        "gitCommitSha": "2cd88e7947b7382e045666abee790c7f55f669f3"
+      }
+    ],
+    "superpowers@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.5",
+        "version": "5.0.5",
+        "installedAt": "2026-02-21T17:03:33.070Z",
+        "lastUpdated": "2026-03-18T13:40:13.222Z",
+        "gitCommitSha": "a0b9ecce2b25aa7d703138f17650540c2e8b2cde"
+      }
+    ],
+    "pr-review-toolkit@claude-code-plugins": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/claude-code-plugins/pr-review-toolkit/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-02-24T11:08:41.448Z",
+        "lastUpdated": "2026-02-24T11:08:41.448Z",
+        "gitCommitSha": "8f0fe03e5687b10134d400c10240071523ace5c5"
+      }
+    ],
+    "firebase@firebase": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/firebase/firebase/1.1.0",
+        "version": "1.1.0",
+        "installedAt": "2026-03-05T02:10:59.985Z",
+        "lastUpdated": "2026-03-05T02:10:59.985Z",
+        "gitCommitSha": "77cd16abdce119c92f9f4ee56f185d12645aa34b"
+      }
+    ],
+    "rust-analyzer-lsp@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/Users/vini/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-03-09T22:54:18.744Z",
+        "lastUpdated": "2026-03-09T22:54:18.744Z",
+        "gitCommitSha": "205b6e0b30366a969412d9aab7b99bea99d58db1"
+      }
+    ]
+  }
+}

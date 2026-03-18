@@ -1,0 +1,26 @@
+{
+  "claude-plugins-official": {
+    "source": {
+      "source": "github",
+      "repo": "anthropics/claude-plugins-official"
+    },
+    "installLocation": "/Users/vini/.claude/plugins/marketplaces/claude-plugins-official",
+    "lastUpdated": "2026-03-18T16:01:51.703Z"
+  },
+  "claude-code-plugins": {
+    "source": {
+      "source": "github",
+      "repo": "anthropics/claude-code"
+    },
+    "installLocation": "/Users/vini/.claude/plugins/marketplaces/claude-code-plugins",
+    "lastUpdated": "2026-03-17T12:56:01.667Z"
+  },
+  "firebase": {
+    "source": {
+      "source": "github",
+      "repo": "firebase/agent-skills"
+    },
+    "installLocation": "/Users/vini/.claude/plugins/marketplaces/firebase",
+    "lastUpdated": "2026-03-05T02:10:47.807Z"
+  }
+}

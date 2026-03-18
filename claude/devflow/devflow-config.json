@@ -1,0 +1,6 @@
+{
+  "file_length_warn": 400,
+  "file_length_critical": 600,
+  "learned_skills_auto_inject": true,
+  "issue_tracker_override": null
+}
