@@ -1,46 +1,102 @@
+<div align="center">
+
 # devflow
 
-**Automatic development guardrails and spec-driven workflows for Claude Code.**
+**Claude Code is brilliant. It has no guardrails.**
 
-devflow is a language-agnostic plugin that adds automatic quality hooks, TDD enforcement, context preservation, and structured development workflows to every Claude Code session. It works globally across all your projects without per-project configuration.
+*Automatic quality hooks, TDD enforcement, and spec-driven workflows — for every project, without configuration.*
 
-Extracted and abstracted from [agentic-ai-systems](https://github.com/ThibautMelen/agentic-ai-systems) (Anthropic's agentic patterns) and [pilot-shell](https://github.com/maxritter/pilot-shell) (professional Claude Code environment).
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
+[![Tests](https://img.shields.io/badge/tests-81-brightgreen.svg)](#running-tests)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-orange.svg)](https://claude.ai/code)
 
-## Why devflow exists
+</div>
 
-Claude Code is powerful but has blind spots out of the box:
+---
 
-- **No automatic quality checks** — you have to manually ask for linting, formatting, and file length awareness
-- **No TDD enforcement** — nothing stops you from writing implementation without tests
-- **Context evaporates on compaction** — when the context window fills up and auto-compacts, you lose track of what you were doing
-- **No protection against accidental session exit** — you can close a session mid-task with no warning
-- **No structured workflow for features vs bugfixes** — every task starts from scratch with no repeatable process
+## The thing nobody warns you about
 
-devflow solves all of these with zero friction — hooks run automatically, skills activate when relevant, and commands are available when you need them.
+You give Claude Code a task. It reads the files, understands the context, and writes genuinely good code.
+
+Then it submits the implementation without a single test. No one stopped it.
+
+You ask it to fix a bug. It fixes the bug and breaks three other things. No one warned it.
+
+You're 90 minutes into a complex refactor. The context window fills up and auto-compacts. Claude comes back with no memory of what it was doing.
+
+**Claude Code doesn't have standards. It has yours — but only when you're watching.**
+
+---
+
+## The blind spots
+
+Five things Claude Code can't do on its own:
+
+- **No automatic quality checks** — you have to manually ask for linting, formatting, and file length awareness on every task
+- **No TDD enforcement** — nothing prevents writing implementation before tests; it will do it every time if you don't stop it
+- **Context evaporates on compaction** — when the window fills and auto-compacts, you lose track of what you were doing and so does Claude
+- **No protection against accidental exit** — you can close a session mid-spec with no warning and no way to resume cleanly
+- **No repeatable workflow** — every feature starts from scratch; every bugfix is handled differently; there's no process
+
+These aren't complaints. They're the gaps that make working with Claude Code feel inconsistent — brilliant when you're present, fragile when you're not.
+
+---
+
+## What it looks like with devflow
+
+```
+[editing src/payments/processor.py]
+
+PostToolUse → file_checker
+  ↳ dart analyze: no issues
+  ↳ ⚠ file length: 423 lines (warn threshold: 400)
+
+PostToolUse → tdd_enforcer
+  ↳ No test found for src/payments/processor.py
+  ↳ Suggested: test/payments/processor_test.dart
+
+[context at 81% of window]
+
+PostToolUse → context_monitor
+  ↳ Context at 81%. Consider /learn to capture key discoveries before compaction.
+
+[git push attempted]
+
+PreToolUse → pre_push_gate
+  ↳ Running dart format --output=none --set-exit-if-changed...
+  ↳ Running flutter analyze...
+  ↳ ✓ All checks passed. Push allowed.
+```
+
+You didn't configure any of that. It runs on every project, every session, automatically.
 
 ---
 
 ## What's inside
 
-### Automatic hooks (run without any action from you)
+### Automatic hooks
 
 These fire on every relevant Claude Code event. You never invoke them — they just work.
 
-| Hook | Event | Matcher | What it does |
-|------|-------|---------|-------------|
-| **discovery_scan** | SessionStart | `*` | Detects project structure on session start: toolchain (Node.js, Flutter, Go, Rust, Maven), issue tracker (Linear, GitHub Issues, Jira, TODO.md), design system, test framework. Manages learned skill symlinks. Outputs `[devflow:project-profile]` to context |
-| **file_checker** | PostToolUse | `Write\|Edit\|MultiEdit` | Detects your project's toolchain (Node.js, Flutter, Go, Rust, Maven) and runs the appropriate formatter + linter. Warns when files exceed 400 lines, alerts at 600. Skips test files, config files, and generated code (`.g.dart`, `.freezed.dart`, `.pb.go`, etc.) |
-| **tdd_enforcer** | PostToolUse | `Write\|Edit\|MultiEdit` | Detects when you write implementation code without a corresponding test. Suggests the exact test file path using language-aware directory mirroring (`src/user.py` → `tests/test_user.py`, `lib/widget.dart` → `test/widget_test.dart`). Non-blocking — advises, never blocks |
-| **context_monitor** | PostToolUse | `Read\|Write\|Edit\|MultiEdit\|Bash\|Glob\|Grep` | Tracks context window usage against the compaction threshold (~167k tokens). Warns at 80% ("consider using /learn"), cautions at 90% ("finish current task, compaction imminent") |
-| **pre_compact** | PreCompact | `*` | Saves session state before auto-compaction: active spec, working directory, session ID. Writes to `~/.claude/devflow/state/<session>/pre-compact.json` |
-| **post_compact_restore** | SessionStart | `compact` | Reads saved state after compaction and injects it into context. You come back knowing exactly what you were working on, what spec was active, and where you were |
-| **spec_stop_guard** | Stop | `*` | Blocks session exit if a spec is actively in progress (status: IMPLEMENTING, PENDING, or in_progress). Suggests `/pause` to explicitly pause. Includes 24-hour expiry for stale specs. Corrupt files older than 24h are treated as abandoned (fail-safe). |
+| Hook | Event | What it does |
+|------|-------|-------------|
+| **discovery_scan** | SessionStart | Detects project structure: toolchain (Node.js, Flutter, Go, Rust, Maven), issue tracker (Linear, GitHub Issues, Jira, TODO.md), design system, test framework. Manages learned skill symlinks. Outputs `[devflow:project-profile]` to context |
+| **file_checker** | PostToolUse (Write\|Edit\|MultiEdit) | Runs the right formatter + linter for your toolchain. Warns at 400 lines, alerts at 600. Skips test files, config files, and generated code (`.g.dart`, `.freezed.dart`, `.pb.go`, etc.) |
+| **tdd_enforcer** | PostToolUse (Write\|Edit\|MultiEdit) | Detects implementation without a corresponding test. Suggests the exact test path using language-aware directory mirroring. Non-blocking — advises, never blocks |
+| **context_monitor** | PostToolUse (broad) | Tracks context usage against the compaction threshold (~167k tokens). Warns at 80%, cautions at 90% |
+| **pre_compact** | PreCompact | Saves active spec, working directory, and session state before auto-compaction |
+| **post_compact_restore** | SessionStart (compact) | Reads saved state after compaction and injects it into context. You come back knowing exactly what you were working on |
+| **spec_stop_guard** | Stop | Blocks session exit if a spec is in progress. Suggests `/pause` to explicitly pause. 24-hour expiry for stale specs — corrupt state older than 24h is treated as abandoned, not a permanent block |
+| **pre_push_gate** | PreToolUse (Bash) | Intercepts `git push` and runs quality checks for your toolchain. Blocks the push if any check fails |
 
-### Commands (you type these in the prompt)
+---
+
+### Commands
 
 #### `/spec "description"`
 
-Starts the spec-driven development workflow. Auto-detects whether you're building a feature or fixing a bug.
+Starts the spec-driven development workflow. Auto-detects feature vs bugfix.
 
 **Feature flow:**
 ```
@@ -49,7 +105,7 @@ Plan → Approve → TDD (RED→GREEN→REFACTOR) → Verify → Done
 
 **Bugfix flow:**
 ```
-Behavior Contract (CHANGES/MUST NOT CHANGE/PROOF) → Approve → TDD → Verify → Done
+Behavior Contract (CHANGES / MUST NOT CHANGE / PROOF) → Approve → TDD → Verify → Done
 ```
 
 **Examples:**
@@ -59,54 +115,29 @@ Behavior Contract (CHANGES/MUST NOT CHANGE/PROOF) → Approve → TDD → Verify
 /spec "refactor auth middleware to support OAuth"
 ```
 
-The `fix:` prefix triggers bugfix mode with a formal behavior contract. Without it, feature mode is used. Ambiguous cases are clarified via question.
+The `fix:` prefix triggers bugfix mode with a formal behavior contract. Ambiguous cases are clarified via question.
 
 #### `/sync`
 
-Scans the current project and discovers its conventions:
+Scans the project and discovers its conventions: stack, naming patterns, test framework, key dependencies. Claude uses the discovered conventions for the rest of the session.
 
-1. **Stack detection** — languages, frameworks, package managers
-2. **Convention discovery** — naming patterns, directory structure, import style
-3. **Test discovery** — test framework, existing test patterns, coverage
-4. **Dependency audit** — key dependencies and versions
-5. **Context update** — Claude uses discovered conventions for the rest of the session
-
-**When to use:**
-- First session in an unfamiliar project
-- After significant structural changes
-- When Claude is making decisions inconsistent with the project
+**When to use:** first session on an unfamiliar project, after structural changes, or when Claude is making inconsistent decisions.
 
 #### `/learn`
 
-Captures non-obvious solutions from the current session as reusable skills:
-
-1. Identifies solutions that aren't well-documented or obvious
-2. Extracts the reusable pattern (the "how" independent of the "what")
-3. Proposes title, trigger, and content
-4. Saves to `~/.claude/skills/devflow-learned-<slug>/SKILL.md`
+Captures non-obvious solutions from the current session as reusable skills. Saves to `~/.claude/skills/devflow-learned-<slug>/SKILL.md` and auto-injects in future sessions when the same project type is detected.
 
 **Good candidates:** recurring bug solutions, undocumented project patterns, non-obvious tool workarounds.
 
-**Bad candidates:** obvious things, context-specific solutions with no reuse, subjective preferences.
-
 #### `/pause`
 
-Pauses the active spec, unblocking session exit:
+Pauses the active spec, unblocking session exit. Changes spec status to `PAUSED` so the stop guard lets you close without losing progress. Resume with `/spec` referencing the existing plan.
 
-1. Reads `~/.claude/devflow/state/<session>/active-spec.json`
-2. Changes status from `IMPLEMENTING`/`PENDING` to `PAUSED`
-3. The stop guard no longer blocks exit
+---
 
-**When to use:**
-- Need to exit but stop guard is blocking
-- Want to pause a spec to work on something else
-- Need to close terminal urgently
+### Skills
 
-**Resuming:** Next session, post_compact_restore shows there was a paused spec. Resume with `/spec` referencing the existing plan.
-
-### Skills (Claude invokes these automatically when relevant)
-
-Skills are reference documents that guide Claude's behavior. You don't call them directly — they activate based on context.
+Skills are reference documents Claude invokes automatically when relevant. You don't call them directly.
 
 #### devflow-spec-driven-dev
 
@@ -120,13 +151,13 @@ The core workflow orchestrator. Defines the complete flow for features and bugfi
 
 #### devflow-behavior-contract
 
-Formal contract for bugfixes with three sections:
+Formal contract for bugfixes. Three sections that must be defined before touching any code:
 
-- **CHANGES** — what WILL change (specific, testable behaviors)
-- **MUST NOT CHANGE** — what MUST NOT change (all callers/dependents of modified component)
-- **PROOF** — tests that prove both CHANGES and MUST NOT CHANGE
+- **CHANGES** — what WILL change (specific, testable)
+- **MUST NOT CHANGE** — what MUST NOT change (all callers and dependents)
+- **PROOF** — tests that prove both sections hold
 
-The contract must be approved by the user before implementation begins. If any MUST NOT CHANGE item breaks during implementation: stop, revise contract, re-present.
+The contract requires user approval before implementation. If any MUST NOT CHANGE item breaks: stop, revise, re-present.
 
 **Example:**
 ```markdown
@@ -136,7 +167,7 @@ The contract must be approved by the user before implementation begins. If any M
 - [ ] GET /api/user/999 → HTTP 404 with {"error": "not found"}
 
 ### MUST NOT CHANGE
-- [ ] GET /api/user/1 (existing) → HTTP 200 with data
+- [ ] GET /api/user/1 (existing) → HTTP 200 with user data
 - [ ] POST /api/user → continues creating users
 - [ ] JWT auth → continues being validated
 
@@ -147,14 +178,14 @@ The contract must be approved by the user before implementation begins. If any M
 
 #### devflow-wizard
 
-Four-phase flow for destructive operations with double confirmation:
+Four-phase confirmation flow for destructive operations:
 
-1. **ANALYZE** — read and understand full scope, list what's affected and irreversible
-2. **PRESENT** — show user what will be done, what can't be undone, and less destructive alternatives
+1. **ANALYZE** — read full scope, list what's affected and what's irreversible
+2. **PRESENT** — show the user what will happen and offer less destructive alternatives
 3. **DETAILED PLAN** — list each step with rollback points, confirm again
-4. **EXECUTE** — only after second confirmation, report each step, stop on anything unexpected
+4. **EXECUTE** — only after second confirmation
 
-**Triggers:** `git reset --hard`, `DROP TABLE`, `rm -rf`, schema migrations, force push, overwriting uncommitted changes, disabling features with active users.
+**Triggers:** `git reset --hard`, `DROP TABLE`, `rm -rf`, schema migrations, force push, overwriting uncommitted changes.
 
 #### devflow-agent-orchestration
 
@@ -162,26 +193,26 @@ Reference guide for structuring multi-agent work. Six patterns in increasing com
 
 | Pattern | When to use |
 |---------|------------|
-| **Baseline** | Simple single-step task |
-| **Prompt Chaining** | Sequential steps where output feeds next step |
+| **Baseline** | Single-step task |
+| **Prompt Chaining** | Sequential steps where output feeds the next |
 | **Routing** | Input needs classification before different processing |
 | **Parallelization** | Independent subtasks with no shared state |
 | **Orchestrator-Workers** | Complex task requiring specialist agents with different contexts |
 | **Evaluator-Optimizer** | Need to iterate until minimum quality criteria is met |
 
-**Critical architectural rule:** Subagents NEVER spawn other subagents. All delegation flows exclusively through the Main Agent. This prevents infinite loops and opaque hierarchies.
+**Critical rule:** Subagents NEVER spawn other subagents. All delegation flows exclusively through the Main Agent.
 
 #### devflow-model-routing
 
-Guide for selecting the right Claude model:
+Guide for selecting the right Claude model per task type:
 
 | Model | Use when |
 |-------|---------|
-| **Opus** | Architectural planning, system design, complex trade-off analysis, debugging without hypothesis |
+| **Opus** | Architectural planning, system design, complex trade-offs, debugging without hypothesis |
 | **Sonnet** | Implementation, refactoring, code review, debugging with hypothesis — **default for 90% of tasks** |
-| **Haiku** | Simple search, formatting, trivial transformations, <2min tasks |
+| **Haiku** | Simple search, formatting, trivial transformations, tasks under 2 minutes |
 
-**Principle:** Start with Sonnet. Scale to Opus only if stuck.
+**Principle:** Start with Sonnet. Scale to Opus only if stuck. Opus is ~5x more expensive — use with intention.
 
 ---
 
@@ -191,13 +222,13 @@ file_checker auto-detects your project and runs the right tools:
 
 | Toolchain | Detection | Formatter | Linter |
 |-----------|-----------|-----------|--------|
-| **Node.js** | `package.json` | Prettier (global or local `node_modules/.bin/`) | ESLint (global or local) |
-| **Flutter/Dart** | `pubspec.yaml` | — | `dart analyze` |
+| **Node.js** | `package.json` | Prettier (global or local `node_modules/.bin/`) | ESLint |
+| **Flutter/Dart** | `pubspec.yaml` | `dart format` | `dart analyze` |
 | **Go** | `go.mod` | `gofmt -w` | `go vet` |
 | **Rust** | `Cargo.toml` | — | `cargo check` |
 | **Maven/Java** | `pom.xml` or `mvnw` | — | `mvn compile` |
 
-If a tool isn't installed, the hook silently skips it. No errors, no noise.
+If a tool isn't installed, the hook skips it silently. No errors, no noise.
 
 ### TDD path suggestions by language
 
@@ -215,80 +246,47 @@ tdd_enforcer knows the naming convention for each language:
 
 Directory mirroring: `src/features/auth/login.py` → `tests/features/auth/test_login.py`
 
-### Skipped files
-
-These are never checked by file_checker or flagged by tdd_enforcer:
-
-- **Test files:** anything matching `test_`, `_test.`, `.test.`, `_spec.`, `.spec.`, `conftest.`, `fixture`, `mock`
-- **Config files:** `.json`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.md`, `.txt`, `.env`, `.lock`, `.gitignore`
-- **Named files:** `Dockerfile`, `Makefile`, `Procfile`
-- **Generated code:** `.g.dart`, `.freezed.dart`, `.generated.ts`, `.generated.js`, `.pb.go`, `.pb.ts`, `.pb.py`, `.moc.cpp`, `.designer.cs`
-- **Directories:** `node_modules`, `.git`, `__pycache__`, `.dart_tool`, `build`, `dist`, `migrations`
-- **Skip names (tdd_enforcer):** `setup.py`, `conftest.py`, `manage.py`, `wsgi.py`, `asgi.py`, `main.dart`, `app.ts`, `index.ts`, `index.js`
-
 ---
 
-## Installation
+## Quickstart
 
 ### Prerequisites
 
-- [Claude Code](https://claude.com/claude-code) CLI installed
-- Python 3.10+ (for hooks)
-- pytest (for running tests): `pip3 install pytest`
+- [Claude Code](https://claude.com/claude-code) CLI installed and authenticated
+- Python 3.10+
+- pytest: `pip3 install pytest`
 
-### Steps
+### Install
 
-1. **Clone the repo:**
 ```bash
-git clone https://github.com/viniciuscffreitas/devflow.git ~/.claude/devflow
-```
-
-2. **Run the installer:**
-```bash
+git clone https://github.com/viniciuscffreitas/devflow ~/.claude/devflow
 chmod +x ~/.claude/devflow/install.sh && ~/.claude/devflow/install.sh
 ```
 
-This handles everything automatically: copies skills and commands to the right directories, registers hooks in `~/.claude/settings.json`, and merges with your existing configuration.
+The installer handles everything: copies skills and commands, registers hooks in `~/.claude/settings.json`, and merges with your existing configuration without overwriting anything.
 
-3. **Optional — copy CLAUDE.md:**
+### Optional: copy CLAUDE.md
+
 ```bash
 cp ~/.claude/devflow/CLAUDE.md ~/.claude/CLAUDE.md
 ```
 
-> If you already have a `~/.claude/CLAUDE.md`, merge the devflow sections manually instead of overwriting.
+> If you already have a `~/.claude/CLAUDE.md`, merge the devflow sections manually.
 
-4. **Verify installation:**
+### Verify
+
 ```bash
-# All 81 tests should pass
 cd ~/.claude/devflow && python3 -m pytest hooks/tests/ -v
+# 81 tests should pass
 ```
 
-### Uninstalling
-
-To remove devflow cleanly:
+### Uninstall
 
 ```bash
 chmod +x ~/.claude/devflow/uninstall.sh && ~/.claude/devflow/uninstall.sh
 ```
 
-This removes skills, commands, and hook registrations from `~/.claude/settings.json` without affecting other plugins.
-
----
-
-## Compatibility
-
-devflow is designed to coexist with other Claude Code plugins:
-
-| Plugin | Conflict? | Notes |
-|--------|-----------|-------|
-| **superpowers** | Partial overlap | superpowers handles brainstorming, worktrees, finishing branches. devflow adds automatic hooks, behavior contracts, wizard, model routing. They complement each other well. **Recommended: keep both** |
-| **pr-review-toolkit** | None | Complementary — devflow doesn't do PR review |
-| **frontend-design** | None | Complementary — devflow doesn't do UI |
-| **swift-lsp** | None | Complementary — devflow doesn't do LSP |
-| **linear** | None | Complementary — devflow doesn't do project management |
-| **explanatory-output-style** | None | Style plugin, no functional overlap |
-| **dippy** | None | dippy is PreToolUse/Bash, devflow hooks are PostToolUse |
-| **soundsh** | None | Sound hooks use different events |
+Removes skills, commands, and hook registrations from `~/.claude/settings.json` without affecting other plugins.
 
 ---
 
@@ -297,10 +295,10 @@ devflow is designed to coexist with other Claude Code plugins:
 ```
 ~/.claude/
 ├── commands/
-│   ├── spec.md          # /spec command
-│   ├── sync.md          # /sync command
-│   ├── learn.md         # /learn command
-│   └── pause.md         # /pause command
+│   ├── spec.md
+│   ├── sync.md
+│   ├── learn.md
+│   └── pause.md
 ├── skills/
 │   ├── devflow-spec-driven-dev/SKILL.md
 │   ├── devflow-behavior-contract/SKILL.md
@@ -309,29 +307,30 @@ devflow is designed to coexist with other Claude Code plugins:
 │   └── devflow-model-routing/SKILL.md
 ├── devflow/
 │   ├── hooks/
-│   │   ├── _util.py              # Shared utilities
-│   │   ├── file_checker.py       # Quality hook
-│   │   ├── tdd_enforcer.py       # TDD hook
-│   │   ├── context_monitor.py    # Context % hook
-│   │   ├── pre_compact.py        # Save state hook
-│   │   ├── post_compact_restore.py  # Restore state hook
-│   │   ├── spec_stop_guard.py    # Stop guard hook
+│   │   ├── _util.py
+│   │   ├── file_checker.py
+│   │   ├── tdd_enforcer.py
+│   │   ├── context_monitor.py
+│   │   ├── pre_compact.py
+│   │   ├── post_compact_restore.py
+│   │   ├── spec_stop_guard.py
+│   │   ├── pre_push_gate.py
 │   │   └── tests/
 │   │       ├── test_util.py           # 22 tests
 │   │       ├── test_file_checker.py   # 10 tests
 │   │       ├── test_tdd_enforcer.py   # 14 tests
 │   │       ├── test_spec_stop_guard.py # 7 tests
 │   │       ├── test_context_monitor.py # 7 tests
-│   │       └── test_compact_hooks.py  # 9 tests (pre + post)
-│   ├── skills/                    # Source skills (copied by install.sh)
-│   ├── commands/                  # Source commands (copied by install.sh)
-│   ├── install.sh                 # Automated installer
-│   ├── uninstall.sh               # Automated uninstaller
+│   │       └── test_compact_hooks.py  # 9 tests
+│   ├── skills/
+│   ├── commands/
+│   ├── install.sh
+│   ├── uninstall.sh
 │   └── state/
 │       └── <session-id>/
-│           ├── active-spec.json   # Current spec status
-│           └── pre-compact.json   # Saved state before compaction
-└── settings.json                  # Hook registrations
+│           ├── active-spec.json
+│           └── pre-compact.json
+└── settings.json
 ```
 
 ### Hook communication protocol
@@ -339,25 +338,22 @@ devflow is designed to coexist with other Claude Code plugins:
 Hooks communicate with Claude Code via JSON on stdout:
 
 ```python
-# Inject context (non-blocking advisory message)
+# Inject context (non-blocking advisory)
 {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "..."}}
 
 # Block an action
 {"decision": "block", "reason": "..."}
-
-# Deny permission
-{"permissionDecision": "deny", "reason": "..."}
 ```
 
-Hooks receive input via stdin (JSON with tool_input, context_tokens_used, etc.). Errors are logged to stderr (doesn't interfere with the stdout protocol).
+Hooks receive input via stdin (JSON with tool_input, context_tokens_used, etc.). Errors go to stderr — no interference with the stdout protocol.
 
 ### Error handling philosophy
 
 - **Hooks must never crash** — a crashing hook disrupts Claude Code's workflow
 - **Silent exit when nothing to report** — no noise, no unnecessary output
-- **Log errors to stderr** — provides diagnostic trail without breaking stdout protocol
-- **Fail-safe for safety hooks** — spec_stop_guard includes a 24-hour expiry; corrupt state files older than 24h are treated as abandoned rather than blocking indefinitely
-- **Fail-open for quality hooks** — file_checker and tdd_enforcer skip gracefully on errors (no false positives)
+- **Log errors to stderr** — diagnostic trail without breaking the protocol
+- **Fail-safe for safety hooks** — spec_stop_guard has a 24-hour expiry; corrupt state older than 24h is treated as abandoned
+- **Fail-open for quality hooks** — file_checker and tdd_enforcer skip gracefully on errors
 
 ---
 
@@ -365,21 +361,18 @@ Hooks receive input via stdin (JSON with tool_input, context_tokens_used, etc.).
 
 ### Adjusting thresholds
 
-Thresholds can be configured via `devflow-config.json` at two levels:
+Two levels of config:
 
 - **Global:** `~/.claude/devflow/devflow-config.json`
 - **Per-project:** `.devflow-config.json` in the project root (overrides global)
 
-Alternatively, edit `~/.claude/devflow/hooks/_util.py` directly:
-
-```python
-FILE_LINES_WARN = 400        # Warning at this many lines
-FILE_LINES_CRITICAL = 600    # Critical at this many lines
-
-CONTEXT_WINDOW_TOKENS = 200_000     # Claude's context window
-AUTOCOMPACT_BUFFER_TOKENS = 33_000  # Buffer before compaction
-CONTEXT_WARN_PCT = 80.0             # Warn at this %
-CONTEXT_CAUTION_PCT = 90.0          # Caution at this %
+```json
+{
+  "file_length_warn": 400,
+  "file_length_critical": 600,
+  "learned_skills_auto_inject": true,
+  "issue_tracker_override": null
+}
 ```
 
 ### Adding a new toolchain
@@ -390,21 +383,9 @@ CONTEXT_CAUTION_PCT = 90.0          # Caution at this %
 4. Create `_check_<toolchain>` function in `file_checker.py`
 5. Register in `_CHECKERS` dict
 
-### Adding generated file patterns
-
-Add to `GENERATED_PATTERNS` in `_util.py`:
-
-```python
-GENERATED_PATTERNS = frozenset({
-    ".g.dart", ".freezed.dart",
-    # Add your pattern here:
-    ".auto.ts",
-})
-```
-
 ### Disabling a specific hook
 
-Remove or comment out the hook entry in `~/.claude/settings.json`. The other hooks continue working independently.
+Remove or comment out the hook entry in `~/.claude/settings.json`. Every hook is independent.
 
 ---
 
@@ -413,48 +394,105 @@ Remove or comment out the hook entry in `~/.claude/settings.json`. The other hoo
 ```bash
 cd ~/.claude/devflow
 
-# Run all 81 tests
+# All 81 tests
 python3 -m pytest hooks/tests/ -v
 
-# Run specific test file
+# Specific file
 python3 -m pytest hooks/tests/test_tdd_enforcer.py -v
 
-# Run with coverage (requires pytest-cov)
+# With coverage
 python3 -m pytest hooks/tests/ --cov=hooks --cov-report=term-missing
 ```
 
 ---
 
-## Concepts and origins
+## Compatibility
 
-devflow synthesizes patterns from two sources into a language-agnostic system:
+devflow coexists cleanly with other Claude Code plugins:
+
+| Plugin | Conflict? | Notes |
+|--------|-----------|-------|
+| **superpowers** | Partial overlap | superpowers handles brainstorming, worktrees, finishing branches. devflow adds hooks, behavior contracts, wizard, model routing. **Recommended: keep both** |
+| **pr-review-toolkit** | None | Complementary — devflow doesn't do PR review |
+| **frontend-design** | None | Complementary — devflow doesn't do UI |
+| **paperweight** | None | Complementary — see pairing section below |
+| **linear** | None | Complementary — devflow doesn't do project management |
+
+---
+
+## The 5 levels of Claude Code maturity
+
+Where are you, and where do you want to be?
+
+| Level | State | Description |
+|-------|-------|-------------|
+| L1 | **Raw** | Claude Code with no config, no workflow. Brilliant when you're watching. Unreliable when you're not. |
+| L2 | **Configured** | Custom `CLAUDE.md`, some commands. Claude knows your preferences — when you remind it. |
+| L3 | **Structured** | Spec-driven development, TDD discipline. You enforce the process manually in every session. |
+| **L4** | **Automated** | **devflow: hooks enforce quality automatically. Process runs whether you remember or not.** |
+| L5 | **Autonomous** | devflow + paperweight: background agents with guardrails. Your backlog resolves itself. |
+
+devflow is the step from L3 to **L4** — where Claude Code stops needing you to hold its standards and starts holding them itself.
+
+---
+
+## Pairing with paperweight
+
+devflow handles the foreground. [paperweight](https://github.com/viniciuscffreitas/paperweight) handles the background.
+
+```
+Interactive session (you + Claude Code)
+  └── devflow: TDD enforcement, spec-driven dev, context preservation, quality gates
+
+Background session (no one watching)
+  └── paperweight: scheduled runs, webhook triggers, budget control, real-time streaming
+```
+
+devflow is the guardrails. paperweight is the engine. Together they form a complete autonomous coding stack — L4 interactive, L5 autonomous.
+
+Install paperweight:
+
+```bash
+git clone https://github.com/viniciuscffreitas/paperweight
+cd paperweight && uv run agents
+```
+
+---
+
+## Origins
+
+devflow synthesizes patterns from two sources:
 
 ### From [agentic-ai-systems](https://github.com/ThibautMelen/agentic-ai-systems) (Anthropic patterns)
-- **Agent orchestration patterns** — Baseline, Prompt Chaining, Routing, Parallelization, Orchestrator-Workers, Evaluator-Optimizer
-- **Subagent flat hierarchy rule** — subagents never spawn subagents
-- **Model routing** — Opus for planning, Sonnet for implementation, Haiku for trivial tasks
-- **Workflow vs autonomous agent distinction** — prefer workflows, use autonomous only when trajectory can't be predefined
+- Agent orchestration patterns — Baseline, Prompt Chaining, Routing, Parallelization, Orchestrator-Workers, Evaluator-Optimizer
+- Subagent flat hierarchy rule — subagents never spawn subagents
+- Model routing — Opus for planning, Sonnet for implementation, Haiku for trivial tasks
 
 ### From [pilot-shell](https://github.com/maxritter/pilot-shell) (professional dev environment)
-- **Spec-driven development** — structured Plan→TDD→Verify flow
-- **Behavior contracts** — CHANGES/MUST NOT CHANGE/PROOF for bugfixes
-- **Automatic quality hooks** — lint, format, file length on every edit
-- **TDD enforcement** — nudge toward test-first development
-- **Context preservation** — save/restore state across compaction
-- **Session exit protection** — prevent accidental loss of work-in-progress
-- **Convention discovery** — `/sync` to understand project patterns
-- **Skill extraction** — `/learn` to capture session discoveries
-- **Wizard pattern** — multi-phase confirmation for destructive ops
+- Spec-driven development — structured Plan→TDD→Verify flow
+- Behavior contracts — CHANGES/MUST NOT CHANGE/PROOF for bugfixes
+- Automatic quality hooks, TDD enforcement, context preservation
+- Session exit protection, convention discovery, skill extraction
 
-### What devflow adds beyond both sources
-- **Language-agnostic toolchain detection** — works across Node.js, Flutter, Go, Rust, Maven without configuration
-- **Smart test path suggestion** — language-aware directory mirroring with correct naming conventions
-- **Generated file detection** — skips codegen artifacts across ecosystems
-- **Fail-safe with expiry** — stop guard uses 24-hour expiry for stale specs instead of blocking indefinitely on corrupt state
-- **Stderr error logging** — diagnostic trail without breaking hook protocol
+### What devflow adds beyond both
+- Language-agnostic toolchain detection across Node.js, Flutter, Go, Rust, Maven without configuration
+- Smart test path suggestion with language-aware directory mirroring
+- Generated file detection — skips codegen artifacts across ecosystems
+- Fail-safe with expiry — stop guard uses 24-hour expiry instead of blocking indefinitely
+- Stderr error logging — diagnostic trail without breaking the hook protocol
 
 ---
 
 ## License
 
 MIT
+
+---
+
+<div align="center">
+
+*The guardrails Claude Code never shipped with.*
+
+**[⭐ Star if you're building with Claude Code](https://github.com/viniciuscffreitas/devflow)**
+
+</div>
