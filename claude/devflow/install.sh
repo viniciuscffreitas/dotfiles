@@ -91,11 +91,20 @@ DEVFLOW_HOOKS = {
             ]
         },
     ],
+    "UserPromptSubmit": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/spec_phase_tracker.py"},
+            ]
+        },
+    ],
     "Stop": [
         {
             "matcher": "",
             "hooks": [
                 {"type": "command", "command": f"python3 {devflow_dir}/hooks/spec_stop_guard.py"},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/task_telemetry.py"},
             ]
         },
     ],
@@ -151,7 +160,7 @@ if python3 -m pytest "$DEVFLOW_DIR/hooks/tests/" -v --tb=short 2>/dev/null; then
     echo "========================================="
     echo ""
     echo "What was installed:"
-    echo "  - 8 automatic hooks (quality, TDD, context, compaction, stop guard, pre-push gate)"
+    echo "  - 10 automatic hooks (quality, TDD, context, compaction, stop guard, pre-push gate, telemetry, spec tracker)"
     echo "  - 5 skills (spec-driven-dev, behavior-contract, wizard, orchestration, model-routing)"
     echo "  - 4 commands (/spec, /sync, /learn, /pause)"
     echo ""

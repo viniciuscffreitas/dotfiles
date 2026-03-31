@@ -7,7 +7,7 @@
 *Automatic quality hooks, TDD enforcement, spec-driven workflows, and context telemetry — for every project, without configuration.*
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-140-brightgreen.svg)](#running-tests)
+[![Tests](https://img.shields.io/badge/tests-197-brightgreen.svg)](#running-tests)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-orange.svg)](https://claude.ai/code)
 
@@ -121,7 +121,8 @@ These fire on every relevant Claude Code event. You never invoke them — they j
 | **post_compact_restore** | SessionStart (compact) | Reads saved state after compaction and injects it into context. You come back knowing exactly what you were working on |
 | **spec_stop_guard** | Stop | Blocks session exit if a spec is in progress. Suggests `/pause` to explicitly pause. 24-hour expiry for stale specs — corrupt state older than 24h is treated as abandoned, not a permanent block |
 | **pre_push_gate** | PreToolUse (Bash) | Intercepts `git push` and runs quality checks for your toolchain. Blocks the push if any check fails |
-| **task_telemetry** | Stop | Scans the session JSONL, identifies `/spec` phase transitions, and records token cost per phase. Silent on sessions without a spec. Output: `~/.claude/devflow/telemetry/sessions.jsonl` |
+| **spec_phase_tracker** | UserPromptSubmit | Detects `/spec` in the user prompt and writes `PENDING` state deterministically — before Claude responds, no LLM instruction-following required |
+| **task_telemetry** | Stop | Scans the session JSONL and records token cost per phase. Infers `IMPLEMENTING` from the first source-file write after `PENDING`; infers `COMPLETED` from the last successful test-runner result. No LLM writes required — purely passive. Output: `~/.claude/devflow/telemetry/sessions.jsonl` |
 
 ---
 
@@ -132,7 +133,15 @@ Every `/spec` cycle passes through two phases:
 - **Understand/Plan** (PENDING → IMPLEMENTING) — tokens the agent burns before writing the first line of code
 - **Build/Verify** (IMPLEMENTING → COMPLETED) — tokens spent on the actual implementation
 
-`task_telemetry` records both phases at session end by scanning the JSONL Claude Code already writes. No code changes required, no workflow modifications. Purely passive instrumentation.
+`task_telemetry` records both phases at session end by scanning the JSONL Claude Code already writes. Phase transitions are inferred automatically — no LLM writes required, no workflow changes:
+
+| Phase | How it's detected |
+|-------|------------------|
+| `PENDING` | `/spec` in the user prompt (deterministic, UserPromptSubmit hook) |
+| `IMPLEMENTING` | First `Write`/`Edit` to a source file (`.py`, `.dart`, `.java`, `.ts`, ...) after PENDING |
+| `COMPLETED` | Last successful test-runner result (`pytest`, `flutter test`, `mvn test`, ...) after IMPLEMENTING |
+
+Explicit `active-spec.json` writes (if present) take priority over inferred phases.
 
 ```bash
 python3 ~/.claude/devflow/hooks/telemetry_report.py
@@ -345,7 +354,7 @@ cp ~/.claude/devflow/CLAUDE.md ~/.claude/CLAUDE.md
 
 ```bash
 cd ~/.claude/devflow && python3 -m pytest hooks/tests/ -v
-# 140 tests should pass
+# 197 tests should pass
 ```
 
 ### Uninstall
@@ -393,8 +402,9 @@ Removes skills, commands, and hook registrations from `~/.claude/settings.json` 
 │   │       ├── test_context_monitor.py    #  7 tests
 │   │       ├── test_compact_hooks.py      #  9 tests
 │   │       ├── test_pre_push_gate.py      # 11 tests
-│   │       ├── test_task_telemetry.py     # 25 tests
-│   │       └── test_telemetry_report.py   # 16 tests  (140 total)
+│   │       ├── test_spec_phase_tracker.py # 15 tests
+│   │       ├── test_task_telemetry.py     # 67 tests
+│   │       └── test_telemetry_report.py   # 16 tests  (197 total)
 │   ├── telemetry/
 │   │   └── sessions.jsonl          ← append-only telemetry log
 │   ├── skills/
@@ -470,7 +480,7 @@ Remove or comment out the hook entry in `~/.claude/settings.json`. Every hook is
 ```bash
 cd ~/.claude/devflow
 
-# All 140 tests
+# All 197 tests
 python3 -m pytest hooks/tests/ -v
 
 # Specific file
@@ -558,7 +568,8 @@ devflow synthesizes patterns from two sources:
 - Generated file detection — skips codegen artifacts across ecosystems
 - Fail-safe with expiry — stop guard uses 24-hour expiry instead of blocking indefinitely
 - Stderr error logging — diagnostic trail without breaking the hook protocol
-- **Context telemetry** — passive measurement of token cost per spec phase, the empirical basis for Context-Native Architecture
+- **Context telemetry** — fully passive measurement of token cost per spec phase, with zero-friction phase inference from JSONL signals (no LLM writes required)
+- **Deterministic spec tracking** — `PENDING` state written before Claude even responds, via UserPromptSubmit hook; `IMPLEMENTING` and `COMPLETED` inferred from coding actions
 
 ---
 
