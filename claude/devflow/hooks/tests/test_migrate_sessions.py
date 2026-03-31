@@ -79,3 +79,18 @@ def test_migrate_record_count_matches_jsonl(tmp_path):
     store = TelemetryStore(db_path=db)
     stats = store.summary_stats()
     assert stats["total_tasks"] == 5
+
+
+def test_migrate_skips_malformed_and_empty_lines(tmp_path):
+    jsonl = tmp_path / "sessions.jsonl"
+    jsonl.write_text(
+        json.dumps({"session_id": "valid_1", "project": "test", "ts_end": 1000, "phases": [], "total_tokens": 100}) + "\n"
+        + "\n"                              # empty line
+        + "NOT VALID JSON\n"                # malformed
+        + json.dumps({"session_id": "valid_2", "project": "test", "ts_end": 2000, "phases": [], "total_tokens": 200}) + "\n",
+        encoding="utf-8",
+    )
+    db = tmp_path / "test.db"
+    from telemetry.migrate_sessions import migrate
+    count = migrate(jsonl_path=jsonl, db_path=db)
+    assert count == 2
