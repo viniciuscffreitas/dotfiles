@@ -35,3 +35,51 @@ def test_linter_result_with_violations():
     )
     assert r.passed is False
     assert len(r.violations) == 1
+
+
+# ---------------------------------------------------------------------------
+# LinterEngine — run / run_all
+# ---------------------------------------------------------------------------
+
+from linters.engine import LinterEngine
+
+
+def test_engine_run_raises_for_unknown_linter(tmp_path):
+    engine = LinterEngine()
+    with pytest.raises(ValueError, match="unknown linter"):
+        engine.run("nonexistent", "", tmp_path)
+
+
+def test_engine_run_all_returns_one_result_per_linter(tmp_path):
+    engine = LinterEngine()
+    results = engine.run_all("", tmp_path)
+    assert len(results) == 4
+    names = {r.linter_name for r in results}
+    assert names == {"import_boundary", "file_size", "coverage_gate", "compile_check"}
+
+
+def test_engine_run_all_never_raises_even_if_linter_throws(tmp_path, monkeypatch):
+    engine = LinterEngine()
+    # Poison one linter to raise
+    def _bad(diff, project_root):
+        raise RuntimeError("exploded")
+    engine._linters["import_boundary"] = _bad
+    results = engine.run_all("", tmp_path)
+    # Should still return 4 results, no exception raised
+    assert len(results) == 4
+    bad = next(r for r in results if r.linter_name == "import_boundary")
+    assert bad.passed is False
+    assert any("linter error" in v for v in bad.violations)
+
+
+def test_engine_run_all_empty_diff_all_pass(tmp_path):
+    engine = LinterEngine()
+    results = engine.run_all("", tmp_path)
+    assert all(r.passed for r in results)
+
+
+def test_engine_run_returns_correct_result_for_known_linter(tmp_path):
+    engine = LinterEngine()
+    result = engine.run("compile_check", "", tmp_path)
+    assert result.linter_name == "compile_check"
+    assert isinstance(result.passed, bool)
