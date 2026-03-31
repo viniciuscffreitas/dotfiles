@@ -271,3 +271,130 @@ class TestTelemetryStoreMigration:
         db = tmp_path / "test2.db"
         TelemetryStore(db_path=db)
         TelemetryStore(db_path=db)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _is_delegatable
+# ---------------------------------------------------------------------------
+
+class TestIsDelegatable:
+    def _import_hook(self):
+        import importlib
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        import pre_task_firewall
+        importlib.reload(pre_task_firewall)
+        return pre_task_firewall
+
+    def test_read_tool_is_delegatable(self):
+        m = self._import_hook()
+        assert m._is_delegatable({"tool_name": "Read", "tool_input": {}}) is True
+
+    def test_bash_with_grep_is_delegatable(self):
+        m = self._import_hook()
+        assert m._is_delegatable({
+            "tool_name": "Bash",
+            "tool_input": {"command": "grep -r foo ."},
+        }) is True
+
+    def test_bash_with_cat_is_delegatable(self):
+        m = self._import_hook()
+        assert m._is_delegatable({
+            "tool_name": "Bash",
+            "tool_input": {"command": "cat README.md"},
+        }) is True
+
+    def test_write_tool_is_not_delegatable(self):
+        m = self._import_hook()
+        assert m._is_delegatable({"tool_name": "Write", "tool_input": {}}) is False
+
+    def test_edit_tool_is_not_delegatable(self):
+        m = self._import_hook()
+        assert m._is_delegatable({"tool_name": "Edit", "tool_input": {}}) is False
+
+    def test_bash_with_write_command_is_not_delegatable(self):
+        m = self._import_hook()
+        assert m._is_delegatable({
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo hello > out.txt"},
+        }) is False
+
+
+# ---------------------------------------------------------------------------
+# pre_task_firewall hook
+# ---------------------------------------------------------------------------
+
+class TestPreTaskFirewallHook:
+    def _import_hook(self):
+        import importlib
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        import pre_task_firewall
+        importlib.reload(pre_task_firewall)
+        return pre_task_firewall
+
+    def _write_risk_profile(self, state_dir: Path, oversight: str) -> None:
+        (state_dir / "risk-profile.json").write_text(
+            f'{{"oversight_level": "{oversight}"}}'
+        )
+
+    def test_prints_skipped_on_vibe(self, tmp_path, capsys):
+        m = self._import_hook()
+        self._write_risk_profile(tmp_path, "vibe")
+        m.run(tmp_path, {"tool_name": "Read", "tool_input": {}})
+        assert "skipped (vibe)" in capsys.readouterr().out
+
+    def test_prints_delegated_false_on_standard(self, tmp_path, capsys):
+        m = self._import_hook()
+        self._write_risk_profile(tmp_path, "standard")
+        m.run(tmp_path, {"tool_name": "Read", "tool_input": {}})
+        out = capsys.readouterr().out
+        assert "delegated=False" in out
+
+    def test_delegates_read_on_strict(self, tmp_path, capsys):
+        m = self._import_hook()
+        self._write_risk_profile(tmp_path, "strict")
+        mock_result = FirewallResult(
+            task_id="x", success=True, output="ok",
+            tokens_used=None, duration_ms=5.0, exit_code=0, error=None,
+        )
+        with patch("pre_task_firewall.ContextFirewall") as mock_fw_cls:
+            mock_fw = MagicMock()
+            mock_fw.run.return_value = mock_result
+            mock_fw_cls.return_value = mock_fw
+            m.run(tmp_path, {"tool_name": "Read", "tool_input": {"file_path": "/tmp/x.py"}})
+        mock_fw.run.assert_called_once()
+        out = capsys.readouterr().out
+        assert "delegated=True" in out
+
+    def test_does_not_delegate_write_on_strict(self, tmp_path, capsys):
+        m = self._import_hook()
+        self._write_risk_profile(tmp_path, "strict")
+        m.run(tmp_path, {"tool_name": "Write", "tool_input": {}})
+        out = capsys.readouterr().out
+        assert "delegated=False" in out
+
+    def test_always_exits_0(self, tmp_path):
+        m = self._import_hook()
+        # No risk-profile.json at all — must not raise
+        code = m.main()
+        assert code == 0
+
+    def test_updates_telemetry_on_delegation(self, tmp_path):
+        m = self._import_hook()
+        self._write_risk_profile(tmp_path, "strict")
+        mock_result = FirewallResult(
+            task_id="x", success=True, output="ok",
+            tokens_used=None, duration_ms=5.0, exit_code=0, error=None,
+        )
+        mock_store = MagicMock()
+        with patch("pre_task_firewall.ContextFirewall") as mock_fw_cls, \
+             patch("pre_task_firewall.TelemetryStore", return_value=mock_store), \
+             patch("pre_task_firewall.get_state_dir", return_value=tmp_path):
+            mock_fw = MagicMock()
+            mock_fw.run.return_value = mock_result
+            mock_fw_cls.return_value = mock_fw
+            m.run(tmp_path, {"tool_name": "Read", "tool_input": {}})
+        mock_store.record.assert_called_once()
+        payload = mock_store.record.call_args[0][0]
+        assert payload["firewall_delegated"] is True
+        assert payload["firewall_success"] is True
+        assert "firewall_duration_ms" in payload
