@@ -173,6 +173,8 @@ class HarnessHealthChecker:
             hook_files = [
                 f for f in hooks_dir.glob("*.py")
                 if f.name != "__init__.py"
+                and not f.name.startswith("_")
+                and not f.name.endswith("_report.py")
             ]
         except Exception:
             return []

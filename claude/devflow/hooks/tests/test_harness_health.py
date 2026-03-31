@@ -324,6 +324,24 @@ def test_check_hooks_discovers_py_files_excluding_init(tmp_path):
     assert "hook_b" in names
 
 
+def test_check_hooks_excludes_utility_and_cli_files(tmp_path):
+    (tmp_path / "real_hook.py").write_text("content")
+    (tmp_path / "_util.py").write_text("content")          # utility module
+    (tmp_path / "foo_report.py").write_text("content")     # CLI tool
+    (tmp_path / "__init__.py").write_text("")               # package marker
+
+    store = MagicMock()
+    store.get_hook_stats.return_value = {
+        "avg_execution_ms": None, "error_rate": 0.0, "last_triggered_at": None
+    }
+
+    checker = HarnessHealthChecker()
+    results = checker._check_hooks(tmp_path, store)
+
+    names = {r.hook_name for r in results}
+    assert names == {"real_hook"}
+
+
 def test_check_hooks_returns_hook_health_per_file(tmp_path):
     (tmp_path / "my_hook.py").write_text("content")
     ts = datetime.now(tz=timezone.utc).isoformat()
