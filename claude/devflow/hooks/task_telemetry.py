@@ -46,7 +46,7 @@ _TEST_RUNNER_RE = re.compile(
 _TEST_FAILURE_RE = re.compile(
     r"\d+\s+failed\b|\bFAILED\b|\bFAILURE\b"
     r"|Tests run:.*(?:Failures|Errors):\s*[1-9]"
-    r"|\d+\s+error",
+    r"|[1-9]\d*\s+error",
     re.IGNORECASE,
 )
 
@@ -127,25 +127,47 @@ def parse_session(jsonl_path: Path) -> dict:
     Parse session JSONL and return phase markers with cumulative tokens.
 
     Explicit phases (writes to active-spec.json) take priority.
-    Missing phases are inferred from coding signals:
+    Missing phases are inferred from coding signals per spec cycle:
       - IMPLEMENTING: first Write/Edit to a source file after PENDING
       - COMPLETED: last successful test-runner Bash result after IMPLEMENTING
+
+    Multiple /spec cycles in one session are handled independently — each
+    cycle's inference state is flushed before the next PENDING begins.
 
     Returns:
         phases: list of {ts, phase, task_id, tokens_cumulative}
         total_tokens: int
     """
-    explicit_phases: list[tuple[str, str, Optional[str], int]] = []
+    all_phases: list[tuple[str, str, Optional[str], int]] = []
     running = 0
+    current_cycle: Optional[dict] = None  # per-cycle inference state
 
-    # Inference state
-    seen_pending = False
-    has_explicit_implementing = False
-    current_task_id: Optional[str] = None
-    first_source_write: Optional[tuple[str, int]] = None  # (ts, tokens)
+    def _new_cycle(task_id: Optional[str]) -> dict:
+        return {
+            "task_id": task_id,
+            "pending_tok": running,
+            "has_explicit_impl": False,
+            "first_source_write": None,   # (ts, tokens)
+            "last_successful_test": None,  # (ts, tokens)
+            "pending_test_calls": {},      # tool_id → (ts, tokens)
+        }
 
-    pending_test_calls: dict[str, tuple[str, int]] = {}  # tool_id → (ts, tokens)
-    last_successful_test: Optional[tuple[str, int]] = None  # (ts, tokens)
+    def _flush(cycle: Optional[dict]) -> None:
+        """Infer missing IMPLEMENTING / COMPLETED for a completed cycle."""
+        if not cycle:
+            return
+        tok0 = cycle["pending_tok"]
+
+        has_impl = any(p[1] == "IMPLEMENTING" and p[3] >= tok0 for p in all_phases)
+        if not has_impl and cycle["first_source_write"]:
+            ts_i, tok_i = cycle["first_source_write"]
+            all_phases.append((ts_i, "IMPLEMENTING", cycle["task_id"], tok_i))
+
+        has_impl_now = any(p[1] == "IMPLEMENTING" and p[3] >= tok0 for p in all_phases)
+        has_done = any(p[1] == "COMPLETED" and p[3] >= tok0 for p in all_phases)
+        if has_impl_now and not has_done and cycle["last_successful_test"]:
+            ts_c, tok_c = cycle["last_successful_test"]
+            all_phases.append((ts_c, "COMPLETED", cycle["task_id"], tok_c))
 
     with open(jsonl_path, encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -176,68 +198,60 @@ def parse_session(jsonl_path: Path) -> dict:
                     if name == "Write":
                         phase, task_id = _parse_phase_from_write(inp)
                         if phase:
-                            explicit_phases.append((ts, phase, task_id, running))
+                            all_phases.append((ts, phase, task_id, running))
                             if phase == "PENDING":
-                                seen_pending = True
-                                current_task_id = task_id
-                                first_source_write = None  # reset for new spec cycle
-                            elif phase == "IMPLEMENTING":
-                                has_explicit_implementing = True
+                                _flush(current_cycle)
+                                current_cycle = _new_cycle(task_id)
+                            elif phase == "IMPLEMENTING" and current_cycle:
+                                current_cycle["has_explicit_impl"] = True
                             continue  # skip source-file check for active-spec.json writes
 
                     if name == "Bash":
                         phase = _parse_phase_from_bash(inp)
                         if phase:
-                            explicit_phases.append((ts, phase, None, running))
+                            all_phases.append((ts, phase, None, running))
                             if phase == "PENDING":
-                                seen_pending = True
-                                first_source_write = None
+                                _flush(current_cycle)
+                                current_cycle = _new_cycle(None)
+
+                    if not current_cycle:
+                        continue
 
                     # Infer IMPLEMENTING: first source Write/Edit after PENDING
                     if (
                         name in ("Write", "Edit")
-                        and seen_pending
-                        and not has_explicit_implementing
-                        and first_source_write is None
+                        and not current_cycle["has_explicit_impl"]
+                        and current_cycle["first_source_write"] is None
                     ):
                         fp = inp.get("file_path", "")
                         if _is_source_file(fp):
-                            first_source_write = (ts, running)
+                            current_cycle["first_source_write"] = (ts, running)
 
                     # Track test runner Bash calls (for COMPLETED inference)
-                    in_impl = has_explicit_implementing or first_source_write is not None
-                    if name == "Bash" and seen_pending and in_impl and tool_id:
+                    in_impl = (
+                        current_cycle["has_explicit_impl"]
+                        or current_cycle["first_source_write"] is not None
+                    )
+                    if name == "Bash" and in_impl and tool_id:
                         cmd = inp.get("command", "")
                         if _is_test_command(cmd):
-                            pending_test_calls[tool_id] = (ts, running)
+                            current_cycle["pending_test_calls"][tool_id] = (ts, running)
 
             elif entry_type == "user":
+                if not current_cycle:
+                    continue
                 for item in entry.get("message", {}).get("content", []):
                     if not isinstance(item, dict) or item.get("type") != "tool_result":
                         continue
                     tid = item.get("tool_use_id", "")
-                    if tid not in pending_test_calls:
+                    if tid not in current_cycle["pending_test_calls"]:
                         continue
-                    ts_cmd, tok_cmd = pending_test_calls.pop(tid)
+                    ts_cmd, tok_cmd = current_cycle["pending_test_calls"].pop(tid)
                     output = _extract_text(item.get("content", ""))
                     if _is_test_success(output):
-                        last_successful_test = (ts_cmd, tok_cmd)
+                        current_cycle["last_successful_test"] = (ts_cmd, tok_cmd)
 
-    all_phases = list(explicit_phases)
-
-    # Fill in IMPLEMENTING if missing
-    has_implementing = any(p[1] == "IMPLEMENTING" for p in all_phases)
-    if not has_implementing and first_source_write is not None:
-        ts_i, tok_i = first_source_write
-        all_phases.append((ts_i, "IMPLEMENTING", current_task_id, tok_i))
-
-    # Fill in COMPLETED if missing
-    has_completed = any(p[1] == "COMPLETED" for p in all_phases)
-    has_impl_now = any(p[1] == "IMPLEMENTING" for p in all_phases)
-    if not has_completed and last_successful_test is not None and has_impl_now:
-        ts_c, tok_c = last_successful_test
-        all_phases.append((ts_c, "COMPLETED", current_task_id, tok_c))
-
+    _flush(current_cycle)
     all_phases.sort(key=lambda x: x[3])
 
     return {

@@ -923,3 +923,55 @@ def test_parse_session_phases_ordered_by_tokens(tmp_path):
     result = parse_session(jsonl)
     tokens = [p["tokens_cumulative"] for p in result["phases"]]
     assert tokens == sorted(tokens)
+
+
+# ---------------------------------------------------------------------------
+# Regression: review-gate bug fixes
+# ---------------------------------------------------------------------------
+
+def test_is_test_success_not_fooled_by_zero_errors():
+    """'0 errors' in output must NOT trigger failure detection (maven success output)."""
+    assert _is_test_success("[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0")
+
+
+def test_is_test_failure_detects_nonzero_errors():
+    """'2 errors' must be detected as failure."""
+    assert not _is_test_success("Tests run: 5, Failures: 0, Errors: 2")
+
+
+def test_parse_session_second_spec_cycle_resets_inference_state(tmp_path):
+    """Two /spec cycles in one session: second cycle must infer phases independently."""
+    # Cycle 1: PENDING → explicit IMPLEMENTING → COMPLETED (explicit)
+    explicit_impl = _write_tool_use("t2", SPEC_PATH,
+                                    json.dumps({"status": "IMPLEMENTING", "plan_path": "feat1.md"}))
+    explicit_done = _write_tool_use("t3", SPEC_PATH,
+                                    json.dumps({"status": "COMPLETED", "plan_path": "feat1.md"}))
+    # Cycle 2: new PENDING → source write → test success (should infer IMPLEMENTING + COMPLETED)
+    lines = [
+        _assistant("T1", {"input_tokens": 200, "output_tokens": 20}, [_pending_write("t1", "feat1.md")]),
+        _assistant("T2", {"input_tokens": 100, "output_tokens": 10}, [explicit_impl]),
+        _assistant("T3", {"input_tokens": 100, "output_tokens": 10}, [explicit_done]),
+        # Start of cycle 2
+        _assistant("T4", {"input_tokens": 200, "output_tokens": 20}, [_pending_write("t4", "feat2.md")]),
+        _assistant("T5", {"input_tokens": 100, "output_tokens": 10},
+                   [_write_tool_use("t5", "/project/src/feature2.py")]),
+        _assistant("T6", {"input_tokens": 50, "output_tokens": 5},
+                   [_bash_tool_use("t6", "pytest tests/")]),
+        _user([_tool_result("t6", "8 passed in 0.4s")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    phases = result["phases"]
+
+    # Should have: PENDING(feat1), IMPLEMENTING(feat1 explicit), COMPLETED(feat1 explicit),
+    #              PENDING(feat2), IMPLEMENTING(feat2 inferred), COMPLETED(feat2 inferred)
+    phase_names = [p["phase"] for p in phases]
+    assert phase_names.count("PENDING") == 2
+    assert phase_names.count("IMPLEMENTING") == 2
+    assert phase_names.count("COMPLETED") == 2
+
+    # Second cycle's task_id must be feat2, not feat1
+    second_impl = [p for p in phases if p["phase"] == "IMPLEMENTING"][1]
+    assert second_impl["task_id"] == "feat2.md"
