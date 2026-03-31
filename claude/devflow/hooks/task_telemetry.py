@@ -158,8 +158,31 @@ def main() -> int:
     }
 
     TELEMETRY_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = TELEMETRY_DIR / "sessions.jsonl"
+    if log_path.exists():
+        try:
+            lines = log_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        existing_ids: set = set()
+        corrupt = 0
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                parsed = json.loads(line)
+                if isinstance(parsed, dict):
+                    existing_ids.add(parsed.get("session_id"))
+                else:
+                    corrupt += 1
+            except json.JSONDecodeError:
+                corrupt += 1
+        if corrupt:
+            print(f"[devflow:telemetry] warning: {corrupt} corrupt line(s) in {log_path.name}", file=sys.stderr)
+        if session_id in existing_ids:
+            return 0
     try:
-        with open(TELEMETRY_DIR / "sessions.jsonl", "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
     except OSError:
         pass

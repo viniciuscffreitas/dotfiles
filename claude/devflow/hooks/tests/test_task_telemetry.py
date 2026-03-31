@@ -448,3 +448,110 @@ def test_main_with_spec_phases_writes_record(tmp_path):
     assert len(records) == 1
     assert records[0]["project"] == "agents"
     assert records[0]["phases"][0]["phase"] == "IMPLEMENTING"
+
+
+# ---------------------------------------------------------------------------
+# main() — deduplication by session_id
+# ---------------------------------------------------------------------------
+
+def _make_spec_jsonl(tmp_path: Path, session_id: str, cwd: str) -> None:
+    """Creates a JSONL with one IMPLEMENTING phase marker."""
+    slug = cwd.replace("/", "-")
+    project_dir = tmp_path / "projects" / slug
+    project_dir.mkdir(parents=True, exist_ok=True)
+    spec_path = "/Users/vini/.claude/devflow/state/abc/active-spec.json"
+    write_tool = {
+        "type": "tool_use",
+        "name": "Write",
+        "input": {
+            "file_path": spec_path,
+            "content": json.dumps({"status": "IMPLEMENTING", "plan_path": "feat.md"}),
+        },
+    }
+    jsonl = project_dir / f"{session_id}.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry(
+            "2026-03-30T10:00:00.000Z",
+            {"input_tokens": 100, "output_tokens": 10},
+            [write_tool],
+        )
+        + "\n"
+    )
+
+
+def test_main_dedup_skips_second_write_same_session(tmp_path):
+    """Stop hook called twice with same session_id produces exactly 1 record."""
+    session_id = "dedup-session-abc"
+    cwd = "/Users/vini/Developer/agents"
+    _make_spec_jsonl(tmp_path, session_id, cwd)
+    telemetry_log = tmp_path / "sessions.jsonl"
+
+    patches = dict(
+        read_hook_stdin=patch("task_telemetry.read_hook_stdin", return_value={}),
+        get_session_id=patch("task_telemetry.get_session_id", return_value=session_id),
+        getcwd=patch("os.getcwd", return_value=cwd),
+        projects=patch("task_telemetry.PROJECTS_DIR", tmp_path / "projects"),
+        telemetry=patch("task_telemetry.TELEMETRY_DIR", tmp_path),
+    )
+    with patches["read_hook_stdin"], patches["get_session_id"], patches["getcwd"], patches["projects"], patches["telemetry"]:
+        main()
+        main()
+
+    records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
+    assert len(records) == 1, f"expected 1 record, got {len(records)}"
+
+
+def test_main_dedup_allows_different_sessions(tmp_path):
+    """Two distinct session_ids each get their own record in the log."""
+    cwd = "/Users/vini/Developer/agents"
+    for sid in ("session-one", "session-two"):
+        _make_spec_jsonl(tmp_path, sid, cwd)
+
+    telemetry_log = tmp_path / "sessions.jsonl"
+
+    for sid in ("session-one", "session-two"):
+        with (
+            patch("task_telemetry.read_hook_stdin", return_value={}),
+            patch("task_telemetry.get_session_id", return_value=sid),
+            patch("os.getcwd", return_value=cwd),
+            patch("task_telemetry.PROJECTS_DIR", tmp_path / "projects"),
+            patch("task_telemetry.TELEMETRY_DIR", tmp_path),
+        ):
+            main()
+
+    records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
+    assert len(records) == 2, f"expected 2 records, got {len(records)}"
+    session_ids = {r["session_id"] for r in records}
+    assert session_ids == {"session-one", "session-two"}
+
+
+def test_main_dedup_corrupt_line_does_not_produce_duplicate(tmp_path, capsys):
+    """Malformed line in sessions.jsonl must not break dedup for a valid session already recorded."""
+    session_id = "dedup-session-corrupt"
+    cwd = "/Users/vini/Developer/agents"
+    _make_spec_jsonl(tmp_path, session_id, cwd)
+    telemetry_log = tmp_path / "sessions.jsonl"
+
+    # Write one valid record + one corrupt line into the log
+    valid_record = json.dumps({"session_id": session_id, "project": "agents", "phases": [], "total_tokens": 0})
+    telemetry_log.write_text(valid_record + "\n" + "not valid json\n")
+
+    with (
+        patch("task_telemetry.read_hook_stdin", return_value={}),
+        patch("task_telemetry.get_session_id", return_value=session_id),
+        patch("os.getcwd", return_value=cwd),
+        patch("task_telemetry.PROJECTS_DIR", tmp_path / "projects"),
+        patch("task_telemetry.TELEMETRY_DIR", tmp_path),
+    ):
+        rc = main()
+
+    assert rc == 0
+    lines = [l for l in telemetry_log.read_text().splitlines() if l.strip()]
+    # Corrupt line is preserved; no duplicate appended
+    valid_lines = [l for l in lines if l.startswith("{")]
+    records = [json.loads(l) for l in valid_lines]
+    assert len(records) == 1, f"expected 1 valid record, got {len(records)}"
+    assert records[0]["session_id"] == session_id
+    # Warn about corrupt line
+    err = capsys.readouterr().err
+    assert "corrupt" in err
