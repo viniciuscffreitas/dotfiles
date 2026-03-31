@@ -558,3 +558,64 @@ def test_review_dismiss_updates_status_to_dismissed(tmp_path):
 
     updated = store.load("dismiss-proj")[0]
     assert updated.status == "dismissed"
+
+
+# ---------------------------------------------------------------------------
+# WeeklySignals — instinct fields + recommendation
+# ---------------------------------------------------------------------------
+
+from analysis.weekly_report import WeeklySignals, WeeklyReportGenerator
+from analysis.harness_health import HarnessHealthReport
+
+
+def _make_signals_with_instincts(**kwargs) -> WeeklySignals:
+    defaults = dict(
+        week_start="2026-03-30",
+        week_end="2026-04-05",
+        sessions_total=10,
+        sessions_with_data=8,
+        judge_pass_rate=0.85,
+        judge_fail_rate=0.15,
+        mean_anxiety_score=0.3,
+        high_anxiety_sessions=1,
+        top_fail_categories=[],
+        top_lob_violations=0,
+        top_duplication_count=0,
+        harness_health="healthy",
+        stale_skill_count=0,
+        broken_hook_count=0,
+        instincts_captured=0,
+        instincts_pending=0,
+    )
+    defaults.update(kwargs)
+    return WeeklySignals(**defaults)
+
+
+def test_weekly_signals_has_instincts_captured_field():
+    s = _make_signals_with_instincts(instincts_captured=3)
+    assert s.instincts_captured == 3
+
+
+def test_weekly_signals_has_instincts_pending_field():
+    s = _make_signals_with_instincts(instincts_pending=7)
+    assert s.instincts_pending == 7
+
+
+def test_generate_recommendations_instincts_pending_over_5_triggers_medium():
+    gen = WeeklyReportGenerator()
+    signals = _make_signals_with_instincts(instincts_pending=6)
+    health = HarnessHealthReport(
+        generated_at="2026-03-31T00:00:00+00:00",
+        overall_verdict="healthy",
+        skill_health=[],
+        hook_health=[],
+        stale_skill_count=0,
+        broken_hook_count=0,
+        simplification_candidates=[],
+        complexity_score=0.0,
+        summary="All good.",
+    )
+    recs = gen._generate_recommendations(signals, health)
+    instinct_recs = [r for r in recs if "instinct" in r.action.lower()]
+    assert len(instinct_recs) >= 1
+    assert instinct_recs[0].priority == "medium"
