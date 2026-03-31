@@ -172,3 +172,103 @@ def test_store_report_counts_match_actual_data(tmp_path):
     assert report.dismissed_count == 1
     assert report.project == "test-proj"
     assert len(report.instincts) == 4
+
+
+# ---------------------------------------------------------------------------
+# instinct_capture — _parse_transcript
+# ---------------------------------------------------------------------------
+
+# Import after sys.path is set up (path already inserted at top of file)
+from instinct_capture import _parse_transcript
+
+
+def test_parse_transcript_counts_tool_uses(tmp_path):
+    jsonl = tmp_path / "sess.jsonl"
+    entry = json.dumps({
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "tool_use", "name": "Read", "id": "t1", "input": {}},
+                {"type": "tool_use", "name": "Write", "id": "t2", "input": {}},
+                {"type": "text", "text": "I'll implement this now."},
+            ],
+            "usage": {"input_tokens": 100, "output_tokens": 20},
+        },
+    })
+    jsonl.write_text(entry + "\n")
+    count, texts = _parse_transcript(jsonl, n_messages=5)
+    assert count == 2
+    assert texts == ["I'll implement this now."]
+
+
+def test_parse_transcript_returns_last_n_assistant_texts(tmp_path):
+    jsonl = tmp_path / "sess.jsonl"
+    entries = []
+    for i in range(7):
+        entries.append(json.dumps({
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": f"Message {i}"}],
+                "usage": {},
+            },
+        }))
+    jsonl.write_text("\n".join(entries) + "\n")
+    _, texts = _parse_transcript(jsonl, n_messages=3)
+    assert len(texts) == 3
+    assert texts[-1] == "Message 6"
+
+
+def test_parse_transcript_ignores_non_assistant_entries(tmp_path):
+    jsonl = tmp_path / "sess.jsonl"
+    entries = [
+        json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Do X"}]}}),
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": "t1", "input": {}}], "usage": {}}}),
+    ]
+    jsonl.write_text("\n".join(entries) + "\n")
+    count, texts = _parse_transcript(jsonl, n_messages=5)
+    assert count == 1
+    assert texts == []
+
+
+# ---------------------------------------------------------------------------
+# instinct_capture — skip conditions (subprocess)
+# ---------------------------------------------------------------------------
+
+import subprocess as _sp
+
+_CAPTURE_SCRIPT = str(Path(__file__).parent.parent / "instinct_capture.py")
+
+
+def test_capture_skips_when_instinct_skip_env_set():
+    result = _sp.run(
+        ["python3.13", _CAPTURE_SCRIPT],
+        env={**os.environ, "DEVFLOW_INSTINCT_SKIP": "1"},
+        input="{}",
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == ""
+
+
+def test_capture_skips_when_project_is_devflow():
+    hook_data = json.dumps({"session_id": "sess-001", "cwd": "/Users/vini/.claude/devflow"})
+    result = _sp.run(
+        ["python3.13", _CAPTURE_SCRIPT],
+        input=hook_data,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "[devflow:instinct] captured" not in result.stdout
+
+
+def test_capture_always_exits_0_with_skip():
+    result = _sp.run(
+        ["python3.13", _CAPTURE_SCRIPT],
+        env={**os.environ, "DEVFLOW_INSTINCT_SKIP": "1"},
+        input="{}",
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
