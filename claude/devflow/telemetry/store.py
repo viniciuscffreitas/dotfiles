@@ -28,6 +28,10 @@ _COLUMNS = [
     "probability_score", "impact_score", "detectability_score", "oversight_level",
     "skills_loaded", "rules_triggered", "harness_drift_detected",
     "task_time_seconds",
+    "firewall_delegated",
+    "firewall_task_id",
+    "firewall_success",
+    "firewall_duration_ms",
 ]
 
 _CREATE_TABLE = """
@@ -62,7 +66,11 @@ CREATE TABLE IF NOT EXISTS task_executions (
     skills_loaded                   TEXT,
     rules_triggered                 TEXT,
     harness_drift_detected          BOOLEAN,
-    task_time_seconds               INTEGER
+    task_time_seconds               INTEGER,
+    firewall_delegated              BOOLEAN,
+    firewall_task_id                TEXT,
+    firewall_success                BOOLEAN,
+    firewall_duration_ms            REAL
 )
 """
 
@@ -89,6 +97,20 @@ class TelemetryStore:
         with self._lock:
             with closing(self._connect()) as conn:
                 conn.execute(_CREATE_TABLE)
+                # Migrate existing databases — idempotent via try/except
+                _new_cols = [
+                    ("firewall_delegated", "BOOLEAN"),
+                    ("firewall_task_id", "TEXT"),
+                    ("firewall_success", "BOOLEAN"),
+                    ("firewall_duration_ms", "REAL"),
+                ]
+                for col, col_type in _new_cols:
+                    try:
+                        conn.execute(
+                            f"ALTER TABLE task_executions ADD COLUMN {col} {col_type}"
+                        )
+                    except sqlite3.OperationalError:
+                        pass  # column already exists
                 conn.commit()
 
     def record(self, payload: dict) -> None:

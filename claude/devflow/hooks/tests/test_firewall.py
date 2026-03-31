@@ -246,3 +246,28 @@ class TestContextFirewallRun:
         with patch("agents.firewall.subprocess.run", side_effect=RuntimeError("crash")):
             result = self.fw.run(self._task())  # must not raise
         assert isinstance(result, FirewallResult)
+
+
+# ---------------------------------------------------------------------------
+# TelemetryStore schema migration
+# ---------------------------------------------------------------------------
+
+class TestTelemetryStoreMigration:
+    def test_firewall_columns_exist_after_init(self, tmp_path):
+        import sqlite3
+        from contextlib import closing
+        from telemetry.store import TelemetryStore
+
+        store = TelemetryStore(db_path=tmp_path / "test.db")
+        with closing(sqlite3.connect(str(tmp_path / "test.db"))) as conn:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(task_executions)")}
+        assert "firewall_delegated" in cols
+        assert "firewall_task_id" in cols
+        assert "firewall_success" in cols
+        assert "firewall_duration_ms" in cols
+
+    def test_firewall_columns_survive_double_init(self, tmp_path):
+        from telemetry.store import TelemetryStore
+        db = tmp_path / "test2.db"
+        TelemetryStore(db_path=db)
+        TelemetryStore(db_path=db)  # must not raise
