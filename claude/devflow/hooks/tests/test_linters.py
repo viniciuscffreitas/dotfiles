@@ -291,3 +291,45 @@ def test_compile_check_ignores_non_python_files(tmp_path):
     result = engine.run("compile_check", diff, tmp_path)
     assert result.passed is True
     assert result.files_checked == 0
+
+
+# ---------------------------------------------------------------------------
+# pre_push_gate integration
+# ---------------------------------------------------------------------------
+
+import subprocess as _subprocess
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from pre_push_gate import run_linters, get_diff
+
+
+def test_run_linters_output_contains_devflow_lint_tag(tmp_path, capsys):
+    run_linters("", tmp_path)
+    captured = capsys.readouterr()
+    assert "[devflow:lint]" in captured.out
+
+
+def test_run_linters_all_pass_returns_true(tmp_path):
+    passed = run_linters("", tmp_path)
+    assert passed is True
+
+
+def test_run_linters_failure_returns_false(tmp_path, monkeypatch):
+    from linters import engine as eng_mod
+    original = eng_mod._lint_compile_check
+
+    def _failing(diff, project_root):
+        return LinterResult("compile_check", False, ["fake.py:1 — SyntaxError: bad"], 1, 0.0)
+
+    monkeypatch.setattr(eng_mod, "_lint_compile_check", _failing)
+    passed = run_linters("", tmp_path)
+    assert passed is False
+
+
+def test_get_diff_returns_string(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    _subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    _subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+    result = get_diff(tmp_path)
+    assert isinstance(result, str)

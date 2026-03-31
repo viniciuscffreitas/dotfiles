@@ -21,6 +21,9 @@ from _util import (
     run_command,
 )
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from linters.engine import LinterEngine
+
 _GIT_PUSH_RE = re.compile(r"^\s*git\s+push\b")
 
 
@@ -95,6 +98,29 @@ def get_quality_commands(
     return []
 
 
+def get_diff(project_root: Path) -> str:
+    """Get diff for linters. Tries HEAD~1 first, falls back to unstaged diff."""
+    code, output = run_command(["git", "diff", "HEAD~1"], cwd=project_root, timeout=10)
+    if code == 0 and output.strip():
+        return output
+    code, output = run_command(["git", "diff"], cwd=project_root, timeout=10)
+    return output if code == 0 else ""
+
+
+def run_linters(diff: str, project_root: Path) -> bool:
+    """Run all linters. Prints summary line. Returns True if all pass."""
+    engine = LinterEngine()
+    results = engine.run_all(diff, project_root)
+    parts = []
+    for r in results:
+        status = "PASS" if r.passed else "FAIL"
+        parts.append(f"{r.linter_name}: {status}")
+        for v in r.violations:
+            print(f"  [devflow:lint] {v}")
+    print(f"[devflow:lint] {' | '.join(parts)}")
+    return all(r.passed for r in results)
+
+
 def main() -> int:
     hook_data = read_hook_stdin()
     command = get_bash_command(hook_data)
@@ -104,6 +130,13 @@ def main() -> int:
 
     toolchain, project_root = detect_toolchain(Path.cwd())
     if not toolchain or not project_root:
+        return 0
+
+    # --- Deterministic linters (run first, cheap, never hallucinate) ---
+    diff = get_diff(project_root)
+    if not run_linters(diff, project_root):
+        msg = "Pre-push gate BLOCKED: linter violations found (see above).\n"
+        print(hook_block(msg))
         return 0
 
     quality_cmds = get_quality_commands(toolchain, project_root)
