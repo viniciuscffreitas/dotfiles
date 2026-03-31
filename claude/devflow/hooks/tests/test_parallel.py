@@ -267,3 +267,48 @@ class TestTaskRegistry:
         reg = TaskRegistry(registry_path=reg_path)
         result = reg.claim("ISSUE-1", "session-a", "proj")
         assert isinstance(result, bool)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: parallel_launch.sh
+# ---------------------------------------------------------------------------
+
+_SCRIPT = _DEVFLOW_ROOT / "scripts" / "parallel_launch.sh"
+
+
+class TestParallelLaunchScript:
+
+    def test_dry_run_prints_table_no_files_created(self, tmp_path):
+        result = subprocess.run(
+            ["bash", str(_SCRIPT), "--dry-run", "ISSUE-123"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+        assert result.returncode == 0
+        assert "ISSUE-123" in result.stdout
+        # No worktree directories created
+        assert not list(tmp_path.iterdir())
+
+    def test_dry_run_accepts_multiple_issue_ids(self, tmp_path):
+        result = subprocess.run(
+            ["bash", str(_SCRIPT), "--dry-run", "ISSUE-1", "ISSUE-2", "ISSUE-3"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+        assert result.returncode == 0
+        assert "ISSUE-1" in result.stdout
+        assert "ISSUE-2" in result.stdout
+        assert "ISSUE-3" in result.stdout
+
+    def test_cleanup_prints_nothing_to_clean_when_no_worktrees(self, tmp_path):
+        result = subprocess.run(
+            ["bash", str(_SCRIPT), "--cleanup"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+        assert result.returncode == 0
+        combined = (result.stdout + result.stderr).lower()
+        assert "nothing" in combined
