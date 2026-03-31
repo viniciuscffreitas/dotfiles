@@ -272,3 +272,200 @@ def test_capture_always_exits_0_with_skip():
         text=True,
     )
     assert result.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# instinct_capture — _call_haiku + full hook behavior
+# ---------------------------------------------------------------------------
+
+from instinct_capture import _call_haiku, main as capture_main
+import instinct_capture as _ic
+
+
+def test_call_haiku_uses_haiku_model():
+    """Verifies claude -p is called with the Haiku model."""
+    captured_args: list[str] = []
+
+    def fake_run(args, **kwargs):
+        captured_args.extend(args)
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = '[{"content": "Use Riverpod.", "confidence": 0.8, "category": "pattern"}]'
+        m.stderr = ""
+        return m
+
+    with patch("instinct_capture.subprocess.run", side_effect=fake_run):
+        result = _call_haiku("transcript text")
+
+    assert "claude" in captured_args
+    assert "-p" in captured_args
+    assert "claude-haiku-4-5-20251001" in captured_args
+    assert len(result) == 1
+    assert result[0]["content"] == "Use Riverpod."
+
+
+def test_call_haiku_parses_valid_json_array():
+    def fake_run(args, **kwargs):
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = '[{"content": "A", "confidence": 0.7, "category": "pitfall"}, {"content": "B", "confidence": 0.5, "category": "convention"}]'
+        m.stderr = ""
+        return m
+
+    with patch("instinct_capture.subprocess.run", side_effect=fake_run):
+        result = _call_haiku("some text")
+
+    assert len(result) == 2
+    assert result[0]["category"] == "pitfall"
+
+
+def test_call_haiku_strips_markdown_fences():
+    def fake_run(args, **kwargs):
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = '```json\n[{"content": "X", "confidence": 0.6, "category": "pattern"}]\n```'
+        m.stderr = ""
+        return m
+
+    with patch("instinct_capture.subprocess.run", side_effect=fake_run):
+        result = _call_haiku("text")
+
+    assert len(result) == 1
+    assert result[0]["content"] == "X"
+
+
+def test_call_haiku_raises_on_subprocess_failure():
+    import subprocess as _subprocess
+    def fake_run(args, **kwargs):
+        m = MagicMock()
+        m.returncode = 1
+        m.stdout = ""
+        m.stderr = "error"
+        return m
+
+    with patch("instinct_capture.subprocess.run", side_effect=fake_run):
+        with pytest.raises(_subprocess.SubprocessError):
+            _call_haiku("text")
+
+
+def test_call_haiku_raises_on_unparseable_response():
+    def fake_run(args, **kwargs):
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = "not valid json"
+        m.stderr = ""
+        return m
+
+    with patch("instinct_capture.subprocess.run", side_effect=fake_run):
+        with pytest.raises(json.JSONDecodeError):
+            _call_haiku("text")
+
+
+def _make_session_jsonl(tmp_path: Path, n_tool_uses: int, texts: list[str]) -> Path:
+    """Create a session JSONL with n tool_uses and given text messages."""
+    p = tmp_path / "sess.jsonl"
+    entries = []
+    for _ in range(n_tool_uses):
+        entries.append(json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "name": "Read", "id": "t1", "input": {}}], "usage": {}},
+        }))
+    for text in texts:
+        entries.append(json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": text}], "usage": {}},
+        }))
+    p.write_text("\n".join(entries) + "\n")
+    return p
+
+
+def test_capture_handles_unparseable_llm_response_gracefully(tmp_path):
+    """When LLM returns garbage JSON, capture exits 0."""
+    session_jsonl = _make_session_jsonl(tmp_path, n_tool_uses=5, texts=["Some text."])
+    instincts_dir = tmp_path / "instincts"
+
+    def fake_run(args, **kwargs):
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = "not json at all"
+        m.stderr = ""
+        return m
+
+    with (
+        patch.object(_ic, "_find_session_jsonl", return_value=session_jsonl),
+        patch.object(_ic, "subprocess") as mock_subp,
+        patch.object(_ic, "read_hook_stdin", return_value={"session_id": "s1", "cwd": "/proj/alpha"}),
+        patch.object(_ic, "InstinctStore", return_value=InstinctStore(base_dir=instincts_dir)),
+    ):
+        mock_subp.run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
+        mock_subp.SubprocessError = __import__("subprocess").SubprocessError
+        mock_subp.TimeoutExpired = __import__("subprocess").TimeoutExpired
+        code = _ic.main()
+    assert code == 0
+
+
+def test_capture_handles_subprocess_failure_gracefully(tmp_path):
+    """When claude subprocess fails, capture exits 0."""
+    session_jsonl = _make_session_jsonl(tmp_path, n_tool_uses=5, texts=["Some text."])
+    instincts_dir = tmp_path / "instincts"
+
+    def fake_run(args, **kwargs):
+        m = MagicMock()
+        m.returncode = 1
+        m.stdout = ""
+        m.stderr = "failure"
+        return m
+
+    with (
+        patch.object(_ic, "_find_session_jsonl", return_value=session_jsonl),
+        patch.object(_ic, "subprocess") as mock_subp,
+        patch.object(_ic, "read_hook_stdin", return_value={"session_id": "s1", "cwd": "/proj/beta"}),
+        patch.object(_ic, "InstinctStore", return_value=InstinctStore(base_dir=instincts_dir)),
+    ):
+        mock_subp.run.return_value = MagicMock(returncode=1, stdout="", stderr="failure")
+        mock_subp.SubprocessError = __import__("subprocess").SubprocessError
+        mock_subp.TimeoutExpired = __import__("subprocess").TimeoutExpired
+        code = _ic.main()
+    assert code == 0
+
+
+def test_capture_prints_devflow_instinct_prefix_on_success(tmp_path, capsys):
+    """When LLM returns valid JSON, prints [devflow:instinct] captured N."""
+    session_jsonl = _make_session_jsonl(tmp_path, n_tool_uses=5, texts=["Did something useful."])
+    instincts_dir = tmp_path / "instincts"
+
+    def fake_run(args, **kwargs):
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = '[{"content": "Use X for Y.", "confidence": 0.8, "category": "pattern"}]'
+        m.stderr = ""
+        return m
+
+    with (
+        patch.object(_ic, "_find_session_jsonl", return_value=session_jsonl),
+        patch.object(_ic, "subprocess") as mock_subp,
+        patch.object(_ic, "read_hook_stdin", return_value={"session_id": "sess-t1", "cwd": "/proj/mom-ease"}),
+        patch.object(_ic, "InstinctStore", return_value=InstinctStore(base_dir=instincts_dir)),
+    ):
+        mock_subp.run.side_effect = fake_run
+        mock_subp.SubprocessError = __import__("subprocess").SubprocessError
+        mock_subp.TimeoutExpired = __import__("subprocess").TimeoutExpired
+        code = _ic.main()
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "[devflow:instinct]" in captured.out
+    assert "captured" in captured.out
+    assert "mom-ease" in captured.out
+
+
+def test_capture_skips_when_tool_use_count_less_than_3(tmp_path):
+    """Session with < 3 tool uses is skipped."""
+    session_jsonl = _make_session_jsonl(tmp_path, n_tool_uses=2, texts=["Some text."])
+
+    with (
+        patch.object(_ic, "_find_session_jsonl", return_value=session_jsonl),
+        patch.object(_ic, "read_hook_stdin", return_value={"session_id": "sess-short", "cwd": "/proj/alpha"}),
+    ):
+        code = _ic.main()
+    assert code == 0
