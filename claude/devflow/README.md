@@ -7,7 +7,7 @@
 *Automatic quality hooks, TDD enforcement, spec-driven workflows, and context telemetry — for every project, without configuration.*
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-197-brightgreen.svg)](#running-tests)
+[![Tests](https://img.shields.io/badge/tests-316-brightgreen.svg)](#running-tests)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-orange.svg)](https://claude.ai/code)
 
