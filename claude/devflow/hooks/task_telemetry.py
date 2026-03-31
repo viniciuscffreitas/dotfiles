@@ -304,31 +304,33 @@ def main() -> int:
 
     TELEMETRY_DIR.mkdir(parents=True, exist_ok=True)
     log_path = TELEMETRY_DIR / "sessions.jsonl"
+    lines_out: list[str] = []
+    corrupt = 0
     if log_path.exists():
         try:
-            lines = log_path.read_text(encoding="utf-8").splitlines()
+            raw_lines = log_path.read_text(encoding="utf-8").splitlines()
         except OSError:
-            lines = []
-        existing_ids: set = set()
-        corrupt = 0
-        for line in lines:
+            raw_lines = []
+        for line in raw_lines:
             if not line.strip():
                 continue
             try:
                 parsed = json.loads(line)
                 if isinstance(parsed, dict):
-                    existing_ids.add(parsed.get("session_id"))
+                    if parsed.get("session_id") != session_id:
+                        lines_out.append(line)
+                    # else: drop stale record — replaced with fresh data below
                 else:
                     corrupt += 1
+                    lines_out.append(line)
             except json.JSONDecodeError:
                 corrupt += 1
-        if corrupt:
-            print(f"[devflow:telemetry] warning: {corrupt} corrupt line(s) in {log_path.name}", file=sys.stderr)
-        if session_id in existing_ids:
-            return 0
+                lines_out.append(line)
+    if corrupt:
+        print(f"[devflow:telemetry] warning: {corrupt} corrupt line(s) in {log_path.name}", file=sys.stderr)
+    lines_out.append(json.dumps(record))
     try:
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record) + "\n")
+        log_path.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
     except OSError:
         pass
 

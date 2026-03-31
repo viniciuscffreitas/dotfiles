@@ -562,6 +562,216 @@ def test_main_dedup_corrupt_line_does_not_produce_duplicate(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
+# main() — upsert: stop hook fires multiple times per session
+# ---------------------------------------------------------------------------
+
+def _make_partial_jsonl(tmp_path: Path, session_id: str, cwd: str, *, with_completed: bool) -> Path:
+    """
+    Creates a JSONL simulating a live session.
+    with_completed=False → only PENDING written (turn 1 state)
+    with_completed=True  → full cycle PENDING+IMPLEMENTING+COMPLETED (turn N state)
+    """
+    slug = cwd.replace("/", "-")
+    project_dir = tmp_path / "projects" / slug
+    project_dir.mkdir(parents=True, exist_ok=True)
+    spec_path = "/Users/vini/.claude/devflow/state/abc/active-spec.json"
+
+    def _spec_write(status: str) -> dict:
+        return {
+            "type": "tool_use", "id": f"id-{status}", "name": "Write",
+            "input": {
+                "file_path": spec_path,
+                "content": json.dumps({"status": status, "plan_path": "docs/plans/feat.md"}),
+            },
+        }
+
+    turn1 = _make_assistant_entry(
+        "2026-03-31T10:00:00.000Z",
+        {"input_tokens": 800, "output_tokens": 80},
+        [_spec_write("PENDING")],
+    )
+    lines = [turn1]
+
+    if with_completed:
+        turn2 = _make_assistant_entry(
+            "2026-03-31T10:01:00.000Z",
+            {"input_tokens": 400, "output_tokens": 40},
+            [_spec_write("IMPLEMENTING")],
+        )
+        turn3 = _make_assistant_entry(
+            "2026-03-31T10:02:00.000Z",
+            {"input_tokens": 200, "output_tokens": 20},
+            [_spec_write("COMPLETED")],
+        )
+        lines += [turn2, turn3]
+
+    jsonl = project_dir / f"{session_id}.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+    return jsonl
+
+
+def test_main_lifecycle_pending_then_completed(tmp_path):
+    """
+    Stop hook fires after turn 1 (PENDING only) → record has 1 phase.
+    Stop hook fires again after turn N (full cycle) → record is REPLACED with 3 phases.
+    This is the exact scenario that caused 5 production sessions to stay at PENDING.
+    """
+    session_id = "lifecycle-session-abc"
+    cwd = "/Users/vini/Developer/agents"
+
+    # Turn 1: JSONL has only PENDING
+    jsonl = _make_partial_jsonl(tmp_path, session_id, cwd, with_completed=False)
+    telemetry_log = tmp_path / "sessions.jsonl"
+
+    patches = dict(
+        stdin=patch("task_telemetry.read_hook_stdin", return_value={}),
+        sid=patch("task_telemetry.get_session_id", return_value=session_id),
+        cwd_=patch("os.getcwd", return_value=cwd),
+        proj=patch("task_telemetry.PROJECTS_DIR", tmp_path / "projects"),
+        tel=patch("task_telemetry.TELEMETRY_DIR", tmp_path),
+    )
+    with patches["stdin"], patches["sid"], patches["cwd_"], patches["proj"], patches["tel"]:
+        main()
+
+    records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
+    assert len(records) == 1
+    assert len(records[0]["phases"]) == 1
+    assert records[0]["phases"][0]["phase"] == "PENDING"
+
+    # Turn N: JSONL now has full PENDING → IMPLEMENTING → COMPLETED cycle
+    _make_partial_jsonl(tmp_path, session_id, cwd, with_completed=True)
+
+    with patches["stdin"], patches["sid"], patches["cwd_"], patches["proj"], patches["tel"]:
+        main()
+
+    records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
+    assert len(records) == 1, "must have exactly 1 record (upsert, not duplicate)"
+    phases = [p["phase"] for p in records[0]["phases"]]
+    assert "PENDING" in phases
+    assert "IMPLEMENTING" in phases
+    assert "COMPLETED" in phases
+
+
+def test_main_upsert_replaces_stale_pending_record(tmp_path):
+    """
+    Pre-existing PENDING-only record in sessions.jsonl is replaced when
+    stop hook fires with a complete JSONL (3 phases).
+    """
+    session_id = "upsert-session-xyz"
+    cwd = "/Users/vini/Developer/agents"
+    _make_partial_jsonl(tmp_path, session_id, cwd, with_completed=True)
+
+    # Seed sessions.jsonl with a stale PENDING-only record
+    telemetry_log = tmp_path / "sessions.jsonl"
+    stale = json.dumps({
+        "session_id": session_id,
+        "project": "agents",
+        "cwd": cwd,
+        "ts_end": 1_000_000,
+        "phases": [{"ts": "T", "phase": "PENDING", "task_id": None, "tokens_cumulative": 100}],
+        "total_tokens": 100,
+    })
+    telemetry_log.write_text(stale + "\n")
+
+    with (
+        patch("task_telemetry.read_hook_stdin", return_value={}),
+        patch("task_telemetry.get_session_id", return_value=session_id),
+        patch("os.getcwd", return_value=cwd),
+        patch("task_telemetry.PROJECTS_DIR", tmp_path / "projects"),
+        patch("task_telemetry.TELEMETRY_DIR", tmp_path),
+    ):
+        main()
+
+    records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
+    assert len(records) == 1, "stale record must be replaced, not duplicated"
+    phases = [p["phase"] for p in records[0]["phases"]]
+    assert "IMPLEMENTING" in phases, "replaced record must contain IMPLEMENTING"
+    assert "COMPLETED" in phases, "replaced record must contain COMPLETED"
+
+
+def test_main_completed_record_has_non_null_key_fields(tmp_path):
+    """
+    A completed session record must have:
+    - total_tokens > 0  (context_tokens proxy)
+    - phases with IMPLEMENTING and COMPLETED  (phase_durations derivable)
+    - at least one phase with non-null task_id  (task_category proxy)
+    """
+    session_id = "quality-session-abc"
+    cwd = "/Users/vini/Developer/agents"
+
+    # Seed a stale PENDING-only record so dedup bug would hide the full data
+    slug = cwd.replace("/", "-")
+    project_dir = tmp_path / "projects" / slug
+    project_dir.mkdir(parents=True)
+    spec_path = "/Users/vini/.claude/devflow/state/abc/active-spec.json"
+
+    def _spec_write(status: str, plan: str) -> dict:
+        return {
+            "type": "tool_use", "id": f"q-{status}", "name": "Write",
+            "input": {
+                "file_path": spec_path,
+                "content": json.dumps({"status": status, "plan_path": plan}),
+            },
+        }
+
+    lines = [
+        _make_assistant_entry(
+            "2026-03-31T10:00:00.000Z",
+            {"input_tokens": 1000, "output_tokens": 100},
+            [_spec_write("PENDING", "docs/plans/my-feature.md")],
+        ),
+        _make_assistant_entry(
+            "2026-03-31T10:01:00.000Z",
+            {"input_tokens": 500, "output_tokens": 50},
+            [_spec_write("IMPLEMENTING", "docs/plans/my-feature.md")],
+        ),
+        _make_assistant_entry(
+            "2026-03-31T10:02:00.000Z",
+            {"input_tokens": 200, "output_tokens": 20},
+            [_spec_write("COMPLETED", "docs/plans/my-feature.md")],
+        ),
+    ]
+    jsonl = project_dir / f"{session_id}.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    # Seed stale PENDING-only record (simulates the production bug)
+    telemetry_log = tmp_path / "sessions.jsonl"
+    stale = json.dumps({
+        "session_id": session_id, "project": "agents", "cwd": cwd,
+        "ts_end": 1_000_000,
+        "phases": [{"ts": "T", "phase": "PENDING", "task_id": "docs/plans/my-feature.md",
+                    "tokens_cumulative": 100}],
+        "total_tokens": 100,
+    })
+    telemetry_log.write_text(stale + "\n")
+
+    with (
+        patch("task_telemetry.read_hook_stdin", return_value={}),
+        patch("task_telemetry.get_session_id", return_value=session_id),
+        patch("os.getcwd", return_value=cwd),
+        patch("task_telemetry.PROJECTS_DIR", tmp_path / "projects"),
+        patch("task_telemetry.TELEMETRY_DIR", tmp_path),
+    ):
+        main()
+
+    records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
+    assert len(records) == 1
+    rec = records[0]
+
+    # context_tokens proxy
+    assert rec["total_tokens"] > 0, "total_tokens must be non-zero"
+
+    # phase_durations proxy: need both IMPLEMENTING and COMPLETED
+    phase_names = [p["phase"] for p in rec["phases"]]
+    assert "IMPLEMENTING" in phase_names, "IMPLEMENTING phase must be present"
+    assert "COMPLETED" in phase_names, "COMPLETED phase must be present"
+
+    # task_category proxy: at least one phase with non-null task_id
+    task_ids = [p.get("task_id") for p in rec["phases"] if p.get("task_id")]
+    assert task_ids, "at least one phase must have a non-null task_id"
+
+
+# ---------------------------------------------------------------------------
 # _is_source_file
 # ---------------------------------------------------------------------------
 
