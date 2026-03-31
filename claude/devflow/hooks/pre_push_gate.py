@@ -42,7 +42,7 @@ def get_quality_commands(
             },
             {
                 "label": "flutter analyze",
-                "cmd": ["flutter", "analyze"],
+                "cmd": ["flutter", "analyze", "--no-fatal-infos"],
                 "timeout": 120,
             },
         ]

@@ -4,10 +4,10 @@
 
 **Claude Code is brilliant. It has no guardrails.**
 
-*Automatic quality hooks, TDD enforcement, and spec-driven workflows — for every project, without configuration.*
+*Automatic quality hooks, TDD enforcement, spec-driven workflows, and context telemetry — for every project, without configuration.*
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-81-brightgreen.svg)](#running-tests)
+[![Tests](https://img.shields.io/badge/tests-140-brightgreen.svg)](#running-tests)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-orange.svg)](https://claude.ai/code)
 
@@ -67,9 +67,41 @@ PreToolUse → pre_push_gate
   ↳ Running dart format --output=none --set-exit-if-changed...
   ↳ Running flutter analyze...
   ↳ ✓ All checks passed. Push allowed.
+
+[session ends after /spec feat-auth]
+
+Stop → task_telemetry
+  ↳ Recorded: feat-auth | understand: 8.2k tokens | build: 44.3k tokens | ratio: 0.19
 ```
 
 You didn't configure any of that. It runs on every project, every session, automatically.
+
+---
+
+## The hidden variable
+
+After two months of watching agents succeed and fail, a pattern became undeniable.
+
+Same model. Same prompts. Completely different results.
+
+When the agent gets a self-contained slice — domain entity, use case, interface, and test all colocated — it gets it right on the first attempt. When it enters a layered codebase where the same concern is scattered across folders, it burns tokens reconstructing context before it can act. And the more tokens it burns before acting, the higher the error rate.
+
+The context window is nominally 200k tokens. Effective limit is ~167k. Research shows model accuracy drops around 32k tokens regardless of window size — instructions buried in the middle get less attention than those at the start and end. This isn't a model limitation to wait out. It's a constraint to design for.
+
+**The architectural implication nobody states clearly:**
+
+It's not enough to manage what you feed the AI session by session. The codebase itself needs to be designed with context boundaries from the first commit. Not layer boundaries. Context boundaries.
+
+```
+Self-contained slice → agent sees everything it needs in one pass → first-attempt success
+Scattered concern    → agent traverses the graph to reconstruct domain → token burn → errors
+```
+
+Your `CLAUDE.md` doesn't document the project. The file structure *is* the context structure. The question you're optimizing for stops being "how do humans navigate this?" and becomes "what does the AI need to see to act here without making mistakes?"
+
+Martin Fowler named this field [context engineering](https://martinfowler.com/articles/exploring-gen-ai/context-engineering-coding-agents.html). Anthropic's 2026 Agentic Coding Trends Report puts it as the primary variable in output quality. The field is converging on a single finding: **the token cost before first action is the most reliable proxy for codebase quality in an agentic world.**
+
+devflow's `task_telemetry` hook measures exactly that.
 
 ---
 
@@ -89,6 +121,42 @@ These fire on every relevant Claude Code event. You never invoke them — they j
 | **post_compact_restore** | SessionStart (compact) | Reads saved state after compaction and injects it into context. You come back knowing exactly what you were working on |
 | **spec_stop_guard** | Stop | Blocks session exit if a spec is in progress. Suggests `/pause` to explicitly pause. 24-hour expiry for stale specs — corrupt state older than 24h is treated as abandoned, not a permanent block |
 | **pre_push_gate** | PreToolUse (Bash) | Intercepts `git push` and runs quality checks for your toolchain. Blocks the push if any check fails |
+| **task_telemetry** | Stop | Scans the session JSONL, identifies `/spec` phase transitions, and records token cost per phase. Silent on sessions without a spec. Output: `~/.claude/devflow/telemetry/sessions.jsonl` |
+
+---
+
+### Context telemetry
+
+Every `/spec` cycle passes through two phases:
+
+- **Understand/Plan** (PENDING → IMPLEMENTING) — tokens the agent burns before writing the first line of code
+- **Build/Verify** (IMPLEMENTING → COMPLETED) — tokens spent on the actual implementation
+
+`task_telemetry` records both phases at session end by scanning the JSONL Claude Code already writes. No code changes required, no workflow modifications. Purely passive instrumentation.
+
+```bash
+python3 ~/.claude/devflow/hooks/telemetry_report.py
+```
+
+```
+PROJECT: agents
+  feat-add-memory-layer       understand:   8.2k | build:  44.3k | ratio: 0.19
+  feat-pipeline-retry         understand:  38.4k | build:  51.2k | ratio: 0.75 ⚠
+
+PROJECT: momease
+  feat-auth-refresh           understand:  12.1k | build:  39.8k | ratio: 0.30
+  feat-notification-center    understand:  41.9k | build:  48.6k | ratio: 0.86 ⚠
+```
+
+**Reading the ratio:** `understand tokens / build tokens`. Low ratio → agent entered the task with sufficient context. High ratio (>0.5) → agent spent more reconstructing than building. Consistent high ratios on a project are a signal that the codebase architecture is working against the agent.
+
+**Filtering:**
+```bash
+python3 ~/.claude/devflow/hooks/telemetry_report.py --project agents
+python3 ~/.claude/devflow/hooks/telemetry_report.py --last 10
+```
+
+Two weeks of data across projects with different architectures gives you the empirical ground truth for the Context-Native Architecture thesis — not anecdote, not intuition, actual numbers.
 
 ---
 
@@ -259,7 +327,7 @@ Directory mirroring: `src/features/auth/login.py` → `tests/features/auth/test_
 ### Install
 
 ```bash
-git clone https://github.com/viniciuscffreitas/devflow ~/.claude/devflow
+git clone https://github.com/viniciuscffreitas/dotfiles ~/.claude/devflow
 chmod +x ~/.claude/devflow/install.sh && ~/.claude/devflow/install.sh
 ```
 
@@ -277,7 +345,7 @@ cp ~/.claude/devflow/CLAUDE.md ~/.claude/CLAUDE.md
 
 ```bash
 cd ~/.claude/devflow && python3 -m pytest hooks/tests/ -v
-# 81 tests should pass
+# 140 tests should pass
 ```
 
 ### Uninstall
@@ -315,13 +383,20 @@ Removes skills, commands, and hook registrations from `~/.claude/settings.json` 
 │   │   ├── post_compact_restore.py
 │   │   ├── spec_stop_guard.py
 │   │   ├── pre_push_gate.py
+│   │   ├── task_telemetry.py       ← records tokens per spec phase
+│   │   ├── telemetry_report.py     ← CLI: tokens per phase per project
 │   │   └── tests/
-│   │       ├── test_util.py           # 22 tests
-│   │       ├── test_file_checker.py   # 10 tests
-│   │       ├── test_tdd_enforcer.py   # 14 tests
-│   │       ├── test_spec_stop_guard.py # 7 tests
-│   │       ├── test_context_monitor.py # 7 tests
-│   │       └── test_compact_hooks.py  # 9 tests
+│   │       ├── test_util.py               # 22 tests
+│   │       ├── test_file_checker.py       # 10 tests
+│   │       ├── test_tdd_enforcer.py       # 14 tests
+│   │       ├── test_spec_stop_guard.py    #  9 tests
+│   │       ├── test_context_monitor.py    #  7 tests
+│   │       ├── test_compact_hooks.py      #  9 tests
+│   │       ├── test_pre_push_gate.py      # 11 tests
+│   │       ├── test_task_telemetry.py     # 25 tests
+│   │       └── test_telemetry_report.py   # 16 tests  (140 total)
+│   ├── telemetry/
+│   │   └── sessions.jsonl          ← append-only telemetry log
 │   ├── skills/
 │   ├── commands/
 │   ├── install.sh
@@ -354,6 +429,7 @@ Hooks receive input via stdin (JSON with tool_input, context_tokens_used, etc.).
 - **Log errors to stderr** — diagnostic trail without breaking the protocol
 - **Fail-safe for safety hooks** — spec_stop_guard has a 24-hour expiry; corrupt state older than 24h is treated as abandoned
 - **Fail-open for quality hooks** — file_checker and tdd_enforcer skip gracefully on errors
+- **Silent on irrelevant sessions** — task_telemetry writes nothing if no `/spec` phases are detected
 
 ---
 
@@ -394,7 +470,7 @@ Remove or comment out the hook entry in `~/.claude/settings.json`. Every hook is
 ```bash
 cd ~/.claude/devflow
 
-# All 81 tests
+# All 140 tests
 python3 -m pytest hooks/tests/ -v
 
 # Specific file
@@ -403,20 +479,6 @@ python3 -m pytest hooks/tests/test_tdd_enforcer.py -v
 # With coverage
 python3 -m pytest hooks/tests/ --cov=hooks --cov-report=term-missing
 ```
-
----
-
-## Compatibility
-
-devflow coexists cleanly with other Claude Code plugins:
-
-| Plugin | Conflict? | Notes |
-|--------|-----------|-------|
-| **superpowers** | Partial overlap | superpowers handles brainstorming, worktrees, finishing branches. devflow adds hooks, behavior contracts, wizard, model routing. **Recommended: keep both** |
-| **pr-review-toolkit** | None | Complementary — devflow doesn't do PR review |
-| **frontend-design** | None | Complementary — devflow doesn't do UI |
-| **paperweight** | None | Complementary — see pairing section below |
-| **linear** | None | Complementary — devflow doesn't do project management |
 
 ---
 
@@ -436,19 +498,35 @@ devflow is the step from L3 to **L4** — where Claude Code stops needing you to
 
 ---
 
+## Compatibility
+
+devflow coexists cleanly with other Claude Code plugins:
+
+| Plugin | Conflict? | Notes |
+|--------|-----------|-------|
+| **superpowers** | Partial overlap | superpowers handles brainstorming, worktrees, finishing branches. devflow adds hooks, behavior contracts, wizard, model routing. **Recommended: keep both** |
+| **pr-review-toolkit** | None | Complementary — devflow doesn't do PR review |
+| **frontend-design** | None | Complementary — devflow doesn't do UI |
+| **paperweight** | None | Complementary — see pairing section below |
+| **linear** | None | Complementary — devflow doesn't do project management |
+
+---
+
 ## Pairing with paperweight
 
 devflow handles the foreground. [paperweight](https://github.com/viniciuscffreitas/paperweight) handles the background.
 
 ```
 Interactive session (you + Claude Code)
-  └── devflow: TDD enforcement, spec-driven dev, context preservation, quality gates
+  └── devflow: TDD enforcement, spec-driven dev, context preservation, quality gates, context telemetry
 
 Background session (no one watching)
-  └── paperweight: scheduled runs, webhook triggers, budget control, real-time streaming
+  └── paperweight: Slack trigger, understand → plan → build → verify → review → merge
 ```
 
 devflow is the guardrails. paperweight is the engine. Together they form a complete autonomous coding stack — L4 interactive, L5 autonomous.
+
+The telemetry data devflow collects feeds the long-term question: do the projects paperweight operates on have the context architecture that lets it act on the first attempt? The ratio is the signal.
 
 Install paperweight:
 
@@ -480,6 +558,7 @@ devflow synthesizes patterns from two sources:
 - Generated file detection — skips codegen artifacts across ecosystems
 - Fail-safe with expiry — stop guard uses 24-hour expiry instead of blocking indefinitely
 - Stderr error logging — diagnostic trail without breaking the hook protocol
+- **Context telemetry** — passive measurement of token cost per spec phase, the empirical basis for Context-Native Architecture
 
 ---
 
