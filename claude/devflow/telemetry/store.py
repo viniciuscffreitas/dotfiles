@@ -185,3 +185,55 @@ class TelemetryStore:
             "spiral_rate": (spirals / total) if total > 0 else 0.0,
             "avg_iterations_by_category": {r[0]: r[1] for r in cat_rows},
         }
+
+    def get_skill_usage(self, skill_name: str) -> dict:
+        """
+        Returns {"last_used_at": str|None, "usage_count": int}.
+        Searches skills_loaded for skill_name as a substring.
+        Falls back to zeros if the store raises.
+        """
+        try:
+            with closing(self._connect()) as conn:
+                row = conn.execute(
+                    "SELECT MAX(timestamp), COUNT(*) FROM task_executions "
+                    "WHERE skills_loaded LIKE ?",
+                    (f"%{skill_name}%",),
+                ).fetchone()
+            return {"last_used_at": row[0], "usage_count": row[1] or 0}
+        except Exception:
+            return {"last_used_at": None, "usage_count": 0}
+
+    def get_hook_stats(self, hook_name: str) -> dict:
+        """
+        Returns {"avg_execution_ms": float|None, "error_rate": float, "last_triggered_at": str|None}.
+        Proxies hook activity from rules_triggered and judge_verdict columns.
+        avg_execution_ms is always None (not stored).
+        Falls back to zeroes if the store raises.
+        """
+        try:
+            with closing(self._connect()) as conn:
+                last_row = conn.execute(
+                    "SELECT MAX(timestamp) FROM task_executions "
+                    "WHERE rules_triggered LIKE ?",
+                    (f"%{hook_name}%",),
+                ).fetchone()
+                total_row = conn.execute(
+                    "SELECT COUNT(*) FROM task_executions "
+                    "WHERE rules_triggered LIKE ?",
+                    (f"%{hook_name}%",),
+                ).fetchone()
+                fail_row = conn.execute(
+                    "SELECT COUNT(*) FROM task_executions "
+                    "WHERE rules_triggered LIKE ? AND judge_verdict = 'fail'",
+                    (f"%{hook_name}%",),
+                ).fetchone()
+            total = total_row[0] or 0
+            failed = fail_row[0] or 0
+            error_rate = (failed / total) if total > 0 else 0.0
+            return {
+                "avg_execution_ms": None,
+                "error_rate": error_rate,
+                "last_triggered_at": last_row[0],
+            }
+        except Exception:
+            return {"avg_execution_ms": None, "error_rate": 0.0, "last_triggered_at": None}
