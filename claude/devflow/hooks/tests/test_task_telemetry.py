@@ -10,7 +10,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from task_telemetry import (
     _cwd_to_slug,
+    _extract_text,
     _find_session_jsonl,
+    _is_source_file,
+    _is_test_command,
+    _is_test_success,
     _project_name,
     _tokens_for,
     _parse_phase_from_write,
@@ -555,3 +559,367 @@ def test_main_dedup_corrupt_line_does_not_produce_duplicate(tmp_path, capsys):
     # Warn about corrupt line
     err = capsys.readouterr().err
     assert "corrupt" in err
+
+
+# ---------------------------------------------------------------------------
+# _is_source_file
+# ---------------------------------------------------------------------------
+
+def test_is_source_file_python():
+    assert _is_source_file("/project/src/main.py")
+
+
+def test_is_source_file_dart():
+    assert _is_source_file("/app/lib/widget.dart")
+
+
+def test_is_source_file_java():
+    assert _is_source_file("/src/main/java/Foo.java")
+
+
+def test_is_source_file_typescript():
+    assert _is_source_file("/frontend/src/App.tsx")
+
+
+def test_is_source_file_swift():
+    assert _is_source_file("/ios/App.swift")
+
+
+def test_is_source_file_rejects_json():
+    assert not _is_source_file("/path/active-spec.json")
+
+
+def test_is_source_file_rejects_markdown():
+    assert not _is_source_file("/docs/README.md")
+
+
+def test_is_source_file_rejects_yaml():
+    assert not _is_source_file("/config/app.yaml")
+
+
+# ---------------------------------------------------------------------------
+# _is_test_command
+# ---------------------------------------------------------------------------
+
+def test_is_test_command_pytest():
+    assert _is_test_command("pytest tests/")
+
+
+def test_is_test_command_flutter():
+    assert _is_test_command("flutter test")
+
+
+def test_is_test_command_mvn():
+    assert _is_test_command("mvn clean test")
+
+
+def test_is_test_command_dart():
+    assert _is_test_command("dart test")
+
+
+def test_is_test_command_mvnw():
+    assert _is_test_command("./mvnw test")
+
+
+def test_is_test_command_rejects_ls():
+    assert not _is_test_command("ls -la")
+
+
+def test_is_test_command_rejects_git():
+    assert not _is_test_command("git commit -m 'add tests'")
+
+
+# ---------------------------------------------------------------------------
+# _is_test_success
+# ---------------------------------------------------------------------------
+
+def test_is_test_success_pytest_passed():
+    assert _is_test_success("30 passed in 1.2s")
+
+
+def test_is_test_success_flutter_passed():
+    assert _is_test_success("All tests passed!")
+
+
+def test_is_test_success_maven_build_success():
+    assert _is_test_success("[INFO] BUILD SUCCESS\n[INFO] Tests run: 5, Failures: 0, Errors: 0")
+
+
+def test_is_test_success_rejects_pytest_failure():
+    assert not _is_test_success("2 failed, 28 passed in 1.2s")
+
+
+def test_is_test_success_rejects_maven_failure():
+    assert not _is_test_success("[ERROR] Tests run: 5, Failures: 2, Errors: 0\n[INFO] BUILD FAILURE")
+
+
+def test_is_test_success_rejects_empty():
+    assert not _is_test_success("")
+
+
+# ---------------------------------------------------------------------------
+# _extract_text
+# ---------------------------------------------------------------------------
+
+def test_extract_text_string():
+    assert _extract_text("hello world") == "hello world"
+
+
+def test_extract_text_list_of_blocks():
+    blocks = [{"type": "text", "text": "3 passed"}, {"type": "text", "text": " in 0.1s"}]
+    assert _extract_text(blocks) == "3 passed  in 0.1s"
+
+
+def test_extract_text_empty_list():
+    assert _extract_text([]) == ""
+
+
+def test_extract_text_none():
+    assert _extract_text(None) == ""
+
+
+# ---------------------------------------------------------------------------
+# parse_session — IMPLEMENTING inference
+# ---------------------------------------------------------------------------
+
+SPEC_PATH = "/Users/vini/.claude/devflow/state/abc/active-spec.json"
+
+
+def _write_tool_use(tool_id: str, file_path: str, content: str = "code") -> dict:
+    return {"type": "tool_use", "id": tool_id, "name": "Write",
+            "input": {"file_path": file_path, "content": content}}
+
+
+def _edit_tool_use(tool_id: str, file_path: str) -> dict:
+    return {"type": "tool_use", "id": tool_id, "name": "Edit",
+            "input": {"file_path": file_path, "old_string": "a", "new_string": "b"}}
+
+
+def _bash_tool_use(tool_id: str, command: str) -> dict:
+    return {"type": "tool_use", "id": tool_id, "name": "Bash",
+            "input": {"command": command}}
+
+
+def _tool_result(tool_use_id: str, content: str) -> dict:
+    return {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
+
+
+def _assistant(ts: str, usage: dict, tool_uses: list) -> str:
+    return json.dumps({
+        "type": "assistant", "timestamp": ts,
+        "message": {"role": "assistant", "usage": usage, "content": tool_uses},
+    })
+
+
+def _user(tool_results: list) -> str:
+    return json.dumps({
+        "type": "user",
+        "message": {"role": "user", "content": tool_results},
+    })
+
+
+def _pending_write(tool_id: str, plan: str = "feat.md") -> dict:
+    return _write_tool_use(tool_id, SPEC_PATH,
+                           json.dumps({"status": "PENDING", "plan_path": plan}))
+
+
+def test_parse_session_infers_implementing_from_source_write(tmp_path):
+    """IMPLEMENTING inferred when source file written after PENDING, no explicit IMPLEMENTING."""
+    lines = [
+        _assistant("T1", {"input_tokens": 500, "output_tokens": 50}, [_pending_write("t1", "feat.md")]),
+        _assistant("T2", {"input_tokens": 200, "output_tokens": 20}, [_write_tool_use("t2", "/project/src/main.py")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    phases = [p["phase"] for p in result["phases"]]
+    assert "IMPLEMENTING" in phases
+    impl = next(p for p in result["phases"] if p["phase"] == "IMPLEMENTING")
+    assert impl["task_id"] == "feat.md"
+
+
+def test_parse_session_infers_implementing_from_edit(tmp_path):
+    """IMPLEMENTING inferred from Edit (not just Write) to source file."""
+    lines = [
+        _assistant("T1", {"input_tokens": 100, "output_tokens": 10}, [_pending_write("t1")]),
+        _assistant("T2", {"input_tokens": 100, "output_tokens": 10}, [_edit_tool_use("t2", "/app/lib/screen.dart")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    assert any(p["phase"] == "IMPLEMENTING" for p in result["phases"])
+
+
+def test_parse_session_no_implementing_inference_without_pending(tmp_path):
+    """Source file write without prior PENDING must NOT produce inferred IMPLEMENTING."""
+    lines = [
+        _assistant("T1", {"input_tokens": 100, "output_tokens": 10},
+                   [_write_tool_use("t1", "/project/src/main.py")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    assert not any(p["phase"] == "IMPLEMENTING" for p in result["phases"])
+
+
+def test_parse_session_no_double_implementing_when_explicit(tmp_path):
+    """Explicit IMPLEMENTING write must NOT produce a second inferred IMPLEMENTING."""
+    explicit_impl = _write_tool_use(
+        "t2", SPEC_PATH,
+        json.dumps({"status": "IMPLEMENTING", "plan_path": "feat.md"}),
+    )
+    lines = [
+        _assistant("T1", {"input_tokens": 200, "output_tokens": 20}, [_pending_write("t1")]),
+        _assistant("T2", {"input_tokens": 200, "output_tokens": 20}, [explicit_impl]),
+        _assistant("T3", {"input_tokens": 100, "output_tokens": 10},
+                   [_write_tool_use("t3", "/project/src/main.py")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    impl_phases = [p for p in result["phases"] if p["phase"] == "IMPLEMENTING"]
+    assert len(impl_phases) == 1
+
+
+def test_parse_session_non_source_write_does_not_trigger_implementing(tmp_path):
+    """Writing a .json or .md file after PENDING must NOT infer IMPLEMENTING."""
+    lines = [
+        _assistant("T1", {"input_tokens": 100, "output_tokens": 10}, [_pending_write("t1")]),
+        _assistant("T2", {"input_tokens": 100, "output_tokens": 10},
+                   [_write_tool_use("t2", "/docs/notes.md")]),
+        _assistant("T3", {"input_tokens": 100, "output_tokens": 10},
+                   [_write_tool_use("t3", "/config/app.json")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    assert not any(p["phase"] == "IMPLEMENTING" for p in result["phases"])
+
+
+# ---------------------------------------------------------------------------
+# parse_session — COMPLETED inference
+# ---------------------------------------------------------------------------
+
+def test_parse_session_infers_completed_from_successful_test_run(tmp_path):
+    """COMPLETED inferred from test run success after inferred IMPLEMENTING."""
+    lines = [
+        _assistant("T1", {"input_tokens": 500, "output_tokens": 50}, [_pending_write("t1")]),
+        _assistant("T2", {"input_tokens": 200, "output_tokens": 20},
+                   [_write_tool_use("t2", "/project/src/main.py")]),
+        _assistant("T3", {"input_tokens": 100, "output_tokens": 10},
+                   [_bash_tool_use("t3", "pytest tests/")]),
+        _user([_tool_result("t3", "30 passed in 1.2s")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    phases = [p["phase"] for p in result["phases"]]
+    assert "IMPLEMENTING" in phases
+    assert "COMPLETED" in phases
+
+
+def test_parse_session_no_completed_when_tests_fail(tmp_path):
+    """Failing test run must NOT produce inferred COMPLETED."""
+    lines = [
+        _assistant("T1", {"input_tokens": 500, "output_tokens": 50}, [_pending_write("t1")]),
+        _assistant("T2", {"input_tokens": 200, "output_tokens": 20},
+                   [_write_tool_use("t2", "/project/src/main.py")]),
+        _assistant("T3", {"input_tokens": 100, "output_tokens": 10},
+                   [_bash_tool_use("t3", "pytest tests/")]),
+        _user([_tool_result("t3", "2 failed, 5 passed in 0.5s")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    assert not any(p["phase"] == "COMPLETED" for p in result["phases"])
+
+
+def test_parse_session_completed_uses_last_successful_test(tmp_path):
+    """Multiple test runs: COMPLETED tokens must match the LAST successful run, not the first."""
+    lines = [
+        _assistant("T1", {"input_tokens": 500, "output_tokens": 50}, [_pending_write("t1")]),
+        _assistant("T2", {"input_tokens": 200, "output_tokens": 20},
+                   [_write_tool_use("t2", "/project/src/main.py")]),
+        # First run: 1 passed (early TDD green)
+        _assistant("T3", {"input_tokens": 100, "output_tokens": 10},
+                   [_bash_tool_use("t3", "pytest tests/")]),
+        _user([_tool_result("t3", "1 passed in 0.1s")]),
+        # Middle: more code
+        _assistant("T4", {"input_tokens": 300, "output_tokens": 30},
+                   [_write_tool_use("t4", "/project/src/util.py")]),
+        # Final run: 10 passed
+        _assistant("T5", {"input_tokens": 100, "output_tokens": 10},
+                   [_bash_tool_use("t5", "pytest tests/")]),
+        _user([_tool_result("t5", "10 passed in 0.5s")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    completed = next(p for p in result["phases"] if p["phase"] == "COMPLETED")
+    impl = next(p for p in result["phases"] if p["phase"] == "IMPLEMENTING")
+
+    # COMPLETED tokens must be > first test run tokens (i.e., from the last run)
+    assert completed["tokens_cumulative"] > impl["tokens_cumulative"]
+
+
+def test_parse_session_no_completed_without_implementing(tmp_path):
+    """Successful test run without PENDING+IMPLEMENTING must NOT infer COMPLETED."""
+    lines = [
+        _assistant("T1", {"input_tokens": 100, "output_tokens": 10},
+                   [_bash_tool_use("t1", "pytest tests/")]),
+        _user([_tool_result("t1", "5 passed in 0.2s")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    assert not any(p["phase"] == "COMPLETED" for p in result["phases"])
+
+
+def test_parse_session_no_double_completed_when_explicit(tmp_path):
+    """Explicit COMPLETED write + successful test run must produce only one COMPLETED."""
+    explicit_completed = _write_tool_use(
+        "t4", SPEC_PATH,
+        json.dumps({"status": "COMPLETED", "plan_path": "feat.md"}),
+    )
+    lines = [
+        _assistant("T1", {"input_tokens": 500, "output_tokens": 50}, [_pending_write("t1")]),
+        _assistant("T2", {"input_tokens": 200, "output_tokens": 20},
+                   [_write_tool_use("t2", "/project/src/main.py")]),
+        _assistant("T3", {"input_tokens": 100, "output_tokens": 10},
+                   [_bash_tool_use("t3", "pytest tests/")]),
+        _user([_tool_result("t3", "10 passed in 0.5s")]),
+        _assistant("T4", {"input_tokens": 50, "output_tokens": 5}, [explicit_completed]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    completed_phases = [p for p in result["phases"] if p["phase"] == "COMPLETED"]
+    assert len(completed_phases) == 1
+
+
+def test_parse_session_phases_ordered_by_tokens(tmp_path):
+    """Phases must be sorted by tokens_cumulative regardless of insertion order."""
+    lines = [
+        _assistant("T1", {"input_tokens": 500, "output_tokens": 50}, [_pending_write("t1")]),
+        _assistant("T2", {"input_tokens": 200, "output_tokens": 20},
+                   [_write_tool_use("t2", "/project/src/main.py")]),
+        _assistant("T3", {"input_tokens": 100, "output_tokens": 10},
+                   [_bash_tool_use("t3", "pytest tests/")]),
+        _user([_tool_result("t3", "5 passed in 0.2s")]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+
+    result = parse_session(jsonl)
+    tokens = [p["tokens_cumulative"] for p in result["phases"]]
+    assert tokens == sorted(tokens)

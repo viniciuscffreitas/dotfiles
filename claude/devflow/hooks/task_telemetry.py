@@ -1,8 +1,12 @@
 """
 Stop hook — scans session JSONL and records per-phase token telemetry.
 
-Detects active-spec.json writes (via Write tool or Bash command) and correlates
-them with cumulative token usage to measure tokens spent per spec phase:
+Detects phase transitions from active-spec.json writes (explicit) and from
+natural coding signals (inferred):
+
+  PENDING      : explicit write OR spec_phase_tracker hook
+  IMPLEMENTING : explicit write OR first source-file Write/Edit after PENDING
+  COMPLETED    : explicit write OR last successful test-runner Bash after IMPLEMENTING
 
   PENDING → IMPLEMENTING : understand/plan phase
   IMPLEMENTING → COMPLETED: build/verify phase
@@ -13,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -23,6 +28,59 @@ from _util import get_session_id, read_hook_stdin
 
 TELEMETRY_DIR = Path.home() / ".claude" / "devflow" / "telemetry"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
+
+
+_SOURCE_EXTS = frozenset({
+    ".py", ".dart", ".java", ".kt", ".ts", ".tsx", ".js", ".jsx",
+    ".swift", ".go", ".rs", ".rb", ".c", ".cpp", ".h", ".hpp",
+    ".cs", ".scala", ".clj", ".ex", ".exs", ".elm", ".vue",
+})
+
+_TEST_RUNNER_RE = re.compile(
+    r"\bpytest\b|\bflutter\s+test\b|\bmvn\b.*\btest\b|\./mvnw\b.*\btest\b"
+    r"|\bdart\s+test\b|\bnpm\s+test\b|\bjest\b|\bgo\s+test\b"
+    r"|\bcargo\s+test\b|\brspec\b|\bdotnet\s+test\b|\bmix\s+test\b",
+    re.IGNORECASE,
+)
+
+_TEST_FAILURE_RE = re.compile(
+    r"\d+\s+failed\b|\bFAILED\b|\bFAILURE\b"
+    r"|Tests run:.*(?:Failures|Errors):\s*[1-9]"
+    r"|\d+\s+error",
+    re.IGNORECASE,
+)
+
+_TEST_SUCCESS_RE = re.compile(
+    r"\d+\s+passed\b|All tests passed|BUILD SUCCESS"
+    r"|Tests run:.*Failures:\s*0.*Errors:\s*0"
+    r"|\d+\s+tests?\s+passed",
+    re.IGNORECASE,
+)
+
+
+def _is_source_file(path: str) -> bool:
+    return Path(path).suffix.lower() in _SOURCE_EXTS
+
+
+def _is_test_command(cmd: str) -> bool:
+    return bool(_TEST_RUNNER_RE.search(cmd))
+
+
+def _is_test_success(output: str) -> bool:
+    if not output:
+        return False
+    if _TEST_FAILURE_RE.search(output):
+        return False
+    return bool(_TEST_SUCCESS_RE.search(output))
+
+
+def _extract_text(content) -> str:
+    """Normalise tool_result content — may be a str or a list of {type, text} blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+    return ""
 
 
 def _cwd_to_slug(cwd: str) -> str:
@@ -68,12 +126,26 @@ def parse_session(jsonl_path: Path) -> dict:
     """
     Parse session JSONL and return phase markers with cumulative tokens.
 
+    Explicit phases (writes to active-spec.json) take priority.
+    Missing phases are inferred from coding signals:
+      - IMPLEMENTING: first Write/Edit to a source file after PENDING
+      - COMPLETED: last successful test-runner Bash result after IMPLEMENTING
+
     Returns:
         phases: list of {ts, phase, task_id, tokens_cumulative}
         total_tokens: int
     """
-    phase_events: list[tuple[str, str, Optional[str], int]] = []
+    explicit_phases: list[tuple[str, str, Optional[str], int]] = []
     running = 0
+
+    # Inference state
+    seen_pending = False
+    has_explicit_implementing = False
+    current_task_id: Optional[str] = None
+    first_source_write: Optional[tuple[str, int]] = None  # (ts, tokens)
+
+    pending_test_calls: dict[str, tuple[str, int]] = {}  # tool_id → (ts, tokens)
+    last_successful_test: Optional[tuple[str, int]] = None  # (ts, tokens)
 
     with open(jsonl_path, encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -85,33 +157,93 @@ def parse_session(jsonl_path: Path) -> dict:
             except json.JSONDecodeError:
                 continue
 
-            if entry.get("type") != "assistant":
-                continue
+            entry_type = entry.get("type")
 
-            ts = entry.get("timestamp", "")
-            usage = entry.get("message", {}).get("usage", {})
-            if usage:
-                running += _tokens_for(usage)
+            if entry_type == "assistant":
+                ts = entry.get("timestamp", "")
+                usage = entry.get("message", {}).get("usage", {})
+                if usage:
+                    running += _tokens_for(usage)
 
-            for item in entry.get("message", {}).get("content", []):
-                if not isinstance(item, dict) or item.get("type") != "tool_use":
-                    continue
-                name = item.get("name", "")
-                inp = item.get("input", {})
+                for item in entry.get("message", {}).get("content", []):
+                    if not isinstance(item, dict) or item.get("type") != "tool_use":
+                        continue
+                    name = item.get("name", "")
+                    inp = item.get("input", {})
+                    tool_id = item.get("id", "")
 
-                if name == "Write":
-                    phase, task_id = _parse_phase_from_write(inp)
-                    if phase:
-                        phase_events.append((ts, phase, task_id, running))
-                elif name == "Bash":
-                    phase = _parse_phase_from_bash(inp)
-                    if phase:
-                        phase_events.append((ts, phase, None, running))
+                    # Explicit phase detection
+                    if name == "Write":
+                        phase, task_id = _parse_phase_from_write(inp)
+                        if phase:
+                            explicit_phases.append((ts, phase, task_id, running))
+                            if phase == "PENDING":
+                                seen_pending = True
+                                current_task_id = task_id
+                                first_source_write = None  # reset for new spec cycle
+                            elif phase == "IMPLEMENTING":
+                                has_explicit_implementing = True
+                            continue  # skip source-file check for active-spec.json writes
+
+                    if name == "Bash":
+                        phase = _parse_phase_from_bash(inp)
+                        if phase:
+                            explicit_phases.append((ts, phase, None, running))
+                            if phase == "PENDING":
+                                seen_pending = True
+                                first_source_write = None
+
+                    # Infer IMPLEMENTING: first source Write/Edit after PENDING
+                    if (
+                        name in ("Write", "Edit")
+                        and seen_pending
+                        and not has_explicit_implementing
+                        and first_source_write is None
+                    ):
+                        fp = inp.get("file_path", "")
+                        if _is_source_file(fp):
+                            first_source_write = (ts, running)
+
+                    # Track test runner Bash calls (for COMPLETED inference)
+                    in_impl = has_explicit_implementing or first_source_write is not None
+                    if name == "Bash" and seen_pending and in_impl and tool_id:
+                        cmd = inp.get("command", "")
+                        if _is_test_command(cmd):
+                            pending_test_calls[tool_id] = (ts, running)
+
+            elif entry_type == "user":
+                for item in entry.get("message", {}).get("content", []):
+                    if not isinstance(item, dict) or item.get("type") != "tool_result":
+                        continue
+                    tid = item.get("tool_use_id", "")
+                    if tid not in pending_test_calls:
+                        continue
+                    ts_cmd, tok_cmd = pending_test_calls.pop(tid)
+                    output = _extract_text(item.get("content", ""))
+                    if _is_test_success(output):
+                        last_successful_test = (ts_cmd, tok_cmd)
+
+    all_phases = list(explicit_phases)
+
+    # Fill in IMPLEMENTING if missing
+    has_implementing = any(p[1] == "IMPLEMENTING" for p in all_phases)
+    if not has_implementing and first_source_write is not None:
+        ts_i, tok_i = first_source_write
+        all_phases.append((ts_i, "IMPLEMENTING", current_task_id, tok_i))
+
+    # Fill in COMPLETED if missing
+    has_completed = any(p[1] == "COMPLETED" for p in all_phases)
+    has_impl_now = any(p[1] == "IMPLEMENTING" for p in all_phases)
+    if not has_completed and last_successful_test is not None and has_impl_now:
+        ts_c, tok_c = last_successful_test
+        all_phases.append((ts_c, "COMPLETED", current_task_id, tok_c))
+
+    all_phases.sort(key=lambda x: x[3])
 
     return {
         "phases": [
             {"ts": ts, "phase": phase, "task_id": task_id, "tokens_cumulative": cum}
-            for ts, phase, task_id, cum in phase_events
+            for ts, phase, task_id, cum in all_phases
         ],
         "total_tokens": running,
     }
@@ -144,8 +276,7 @@ def main() -> int:
         return 0
 
     if not result["phases"]:
-        print(f"[devflow:telemetry] skip: no active-spec.json writes in {jsonl_path.name}", file=sys.stderr)
-        print("[devflow:telemetry] hint: skill must write active-spec.json at PENDING/IMPLEMENTING/COMPLETED", file=sys.stderr)
+        print(f"[devflow:telemetry] skip: no spec activity detected in {jsonl_path.name}", file=sys.stderr)
         return 0
 
     record = {
