@@ -180,4 +180,30 @@ def _lint_coverage_gate(diff: str, project_root: Path) -> LinterResult:
 
 
 def _lint_compile_check(diff: str, project_root: Path) -> LinterResult:
-    return LinterResult("compile_check", True, [], 0, 0.0)
+    t0 = time.monotonic()
+    violations: list[str] = []
+    modified_files: set[str] = set()
+
+    for line in diff.splitlines():
+        m = _DIFF_FILE_RE.match(line)
+        if m:
+            modified_files.add(m.group(2))
+
+    py_files = [f for f in modified_files if f.endswith(".py")]
+    files_checked = 0
+
+    for rel_path in py_files:
+        abs_path = project_root / rel_path
+        if not abs_path.exists():
+            continue  # deleted file — skip
+        files_checked += 1
+        try:
+            source = abs_path.read_text(encoding="utf-8", errors="ignore")
+            ast.parse(source, filename=rel_path)
+        except SyntaxError as e:
+            violations.append(f"{rel_path}:{e.lineno} — SyntaxError: {e.msg}")
+        except Exception:  # noqa: BLE001
+            pass  # other parse errors: skip silently
+
+    duration_ms = (time.monotonic() - t0) * 1000
+    return LinterResult("compile_check", not violations, violations, files_checked, duration_ms)

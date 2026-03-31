@@ -234,3 +234,60 @@ def test_coverage_gate_skips_non_feature_files(tmp_path):
     result = engine.run("coverage_gate", diff, tmp_path)
     assert result.passed is True
     assert result.violations == []
+
+
+# ---------------------------------------------------------------------------
+# compile_check
+# ---------------------------------------------------------------------------
+
+def test_compile_check_passes_for_valid_python(tmp_path):
+    src = tmp_path / "hooks" / "my_hook.py"
+    src.parent.mkdir(parents=True)
+    src.write_text("def foo():\n    return 42\n")
+    diff = _make_diff_for_file("hooks/my_hook.py")
+    engine = LinterEngine()
+    result = engine.run("compile_check", diff, tmp_path)
+    assert result.passed is True
+    assert result.violations == []
+
+
+def test_compile_check_fails_with_line_number_for_syntax_error(tmp_path):
+    src = tmp_path / "hooks" / "bad.py"
+    src.parent.mkdir(parents=True)
+    src.write_text("def foo(\n    return 42\n")
+    diff = _make_diff_for_file("hooks/bad.py")
+    engine = LinterEngine()
+    result = engine.run("compile_check", diff, tmp_path)
+    assert result.passed is False
+    assert len(result.violations) == 1
+    assert "SyntaxError" in result.violations[0]
+    # line number must be present in format "file:N — SyntaxError: ..."
+    parts = result.violations[0].split(":")
+    assert len(parts) >= 2
+    assert parts[1].split(" ")[0].isdigit()
+
+
+def test_compile_check_skips_deleted_files(tmp_path):
+    # File mentioned in diff but NOT on disk — must be skipped silently
+    diff = _make_diff_for_file("hooks/deleted.py")
+    engine = LinterEngine()
+    result = engine.run("compile_check", diff, tmp_path)
+    assert result.passed is True
+    assert result.violations == []
+
+
+def test_compile_check_never_raises_on_malformed_input(tmp_path):
+    engine = LinterEngine()
+    result = engine.run("compile_check", "\x00\xff malformed diff", tmp_path)
+    assert isinstance(result, LinterResult)
+
+
+def test_compile_check_ignores_non_python_files(tmp_path):
+    src = tmp_path / "lib" / "main.dart"
+    src.parent.mkdir(parents=True)
+    src.write_text("void main() {}\n")
+    diff = _make_diff_for_file("lib/main.dart")
+    engine = LinterEngine()
+    result = engine.run("compile_check", diff, tmp_path)
+    assert result.passed is True
+    assert result.files_checked == 0
