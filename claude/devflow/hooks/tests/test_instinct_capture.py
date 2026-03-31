@@ -1,7 +1,6 @@
 """Tests for instinct capture — dataclasses, store, hook, review CLI."""
 from __future__ import annotations
 
-import dataclasses
 import json
 import os
 import sys
@@ -13,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from analysis.instinct_store import Instinct, InstinctReport, InstinctStore
+from analysis.instinct_store import Instinct, InstinctStore
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +277,7 @@ def test_capture_always_exits_0_with_skip():
 # instinct_capture — _call_haiku + full hook behavior
 # ---------------------------------------------------------------------------
 
-from instinct_capture import _call_haiku, main as capture_main
+from instinct_capture import _call_haiku
 import instinct_capture as _ic
 
 

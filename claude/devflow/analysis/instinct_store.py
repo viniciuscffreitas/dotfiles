@@ -10,7 +10,6 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 _INSTINCTS_DIR = Path.home() / ".claude" / "devflow" / "instincts"
 
@@ -25,7 +24,7 @@ class Instinct:
     confidence: float             # 0.3-0.9
     category: str                 # "pattern"|"preference"|"convention"|"pitfall"
     status: str = "pending"       # "pending"|"promoted"|"dismissed"
-    promoted_to: Optional[str] = None  # path of rule file if promoted
+    promoted_to: str | None = None  # path of rule file if promoted
 
 
 @dataclass
