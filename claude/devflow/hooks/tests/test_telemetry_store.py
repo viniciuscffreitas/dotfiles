@@ -37,13 +37,16 @@ def test_schema_has_required_columns(tmp_path):
     conn.close()
     required = {
         "task_id", "timestamp", "task_category", "task_description", "stack",
-        "iterations_to_completion", "context_tokens_consumed",
-        "context_tokens_at_first_action", "spiral_detected",
-        "judge_verdict", "judge_categories_failed",
-        "probability_score", "impact_score", "oversight_level",
-        "skills_loaded", "rules_triggered", "task_time_seconds",
+        "iterations_to_completion", "tool_calls_total", "tool_calls_without_output",
+        "context_tokens_consumed", "context_tokens_at_first_action",
+        "backtrack_count", "compile_errors_first_attempt", "compaction_events", "spiral_detected",
+        "judge_verdict", "judge_categories_failed", "lob_violations",
+        "duplication_detected", "type_contract_violations", "unjustified_complexity",
+        "naming_consistency_score", "edge_case_coverage", "arch_pattern_violations",
+        "probability_score", "impact_score", "detectability_score", "oversight_level",
+        "skills_loaded", "rules_triggered", "harness_drift_detected", "task_time_seconds",
     }
-    assert required <= cols
+    assert required == cols
 
 
 # ---------------------------------------------------------------------------
