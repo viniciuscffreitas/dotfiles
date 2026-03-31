@@ -178,3 +178,92 @@ class TestGetSessionId:
         import importlib, _session
         importlib.reload(_session)
         assert _session.is_safe_session() is False
+
+
+# ---------------------------------------------------------------------------
+# Task 3: TaskRegistry
+# ---------------------------------------------------------------------------
+
+from agents.task_registry import TaskRegistry
+
+
+class TestTaskRegistry:
+
+    def test_claim_unclaimed_task_returns_true(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "registry.json")
+        assert reg.claim("ISSUE-1", "session-a", "proj") is True
+
+    def test_claim_already_claimed_returns_false(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "registry.json")
+        reg.claim("ISSUE-1", "session-a", "proj")
+        assert reg.claim("ISSUE-1", "session-b", "proj") is False
+
+    def test_claim_atomic_under_concurrency_only_one_wins(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "registry.json")
+        results: list[bool] = []
+
+        def try_claim() -> None:
+            results.append(
+                reg.claim("ISSUE-1", f"s-{threading.get_ident()}", "proj")
+            )
+
+        threads = [threading.Thread(target=try_claim) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert results.count(True) == 1
+        assert results.count(False) == 2
+
+    def test_release_updates_status_to_done(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "registry.json")
+        reg.claim("ISSUE-1", "session-a", "proj")
+        reg.release("ISSUE-1", "session-a", "done")
+        data = json.loads((tmp_path / "registry.json").read_text())
+        assert data["tasks"]["ISSUE-1"]["status"] == "done"
+
+    def test_release_by_wrong_session_is_noop(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "registry.json")
+        reg.claim("ISSUE-1", "session-a", "proj")
+        reg.release("ISSUE-1", "session-b", "done")
+        data = json.loads((tmp_path / "registry.json").read_text())
+        assert data["tasks"]["ISSUE-1"]["status"] == "in_progress"
+
+    def test_list_available_excludes_claimed_tasks(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "registry.json")
+        reg.claim("ISSUE-1", "session-a", "proj")
+        available = reg.list_available(["ISSUE-1", "ISSUE-2"])
+        assert "ISSUE-1" not in available
+        assert "ISSUE-2" in available
+
+    def test_list_available_reclaims_stale_tasks(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "registry.json")
+        reg.claim("ISSUE-1", "session-a", "proj")
+        # Backdate claimed_at to simulate a 2-hour-old stale entry
+        data = json.loads((tmp_path / "registry.json").read_text())
+        data["tasks"]["ISSUE-1"]["claimed_at"] = "2020-01-01T00:00:00+00:00"
+        (tmp_path / "registry.json").write_text(json.dumps(data))
+        available = reg.list_available(["ISSUE-1", "ISSUE-2"])
+        assert "ISSUE-1" in available
+
+    def test_list_active_returns_only_in_progress_non_stale(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "registry.json")
+        reg.claim("ISSUE-1", "session-a", "proj")
+        reg.claim("ISSUE-2", "session-b", "proj")
+        reg.release("ISSUE-2", "session-b", "done")
+        active = reg.list_active()
+        assert len(active) == 1
+        assert active[0]["task_id"] == "ISSUE-1"
+
+    def test_never_raises_on_missing_registry_file(self, tmp_path):
+        reg = TaskRegistry(registry_path=tmp_path / "sub" / "registry.json")
+        result = reg.claim("ISSUE-1", "session-a", "proj")
+        assert isinstance(result, bool)
+
+    def test_never_raises_on_corrupted_registry_file(self, tmp_path):
+        reg_path = tmp_path / "registry.json"
+        reg_path.write_text("{{{ not valid json !!!")
+        reg = TaskRegistry(registry_path=reg_path)
+        result = reg.claim("ISSUE-1", "session-a", "proj")
+        assert isinstance(result, bool)
