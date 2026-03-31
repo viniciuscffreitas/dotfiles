@@ -369,3 +369,106 @@ class TestJudgeRouter:
         assert "[devflow:judge]" in out
         assert "verdict=FAIL" in out
         assert "oversight=STRICT" in out
+
+
+# ---------------------------------------------------------------------------
+# post_task_judge hook
+# ---------------------------------------------------------------------------
+
+class TestPostTaskJudgeHook:
+    """Tests for the Stop hook that orchestrates judge evaluation."""
+
+    def _write_risk_profile(self, tmp_path: Path, oversight_level: str) -> None:
+        (tmp_path / "risk-profile.json").write_text(json.dumps({
+            "oversight_level": oversight_level,
+            "probability": 0.3,
+            "impact": 0.8,
+            "detectability": 0.5,
+        }))
+
+    def _hook_module(self):
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        import importlib
+        import post_task_judge
+        importlib.reload(post_task_judge)
+        return post_task_judge
+
+    def test_reads_oversight_level_from_risk_profile(self, tmp_path):
+        m = self._hook_module()
+        self._write_risk_profile(tmp_path, "strict")
+        with patch.object(m, "_get_diff", return_value=""), \
+             patch("post_task_judge.HarnessJudge") as mock_judge_cls, \
+             patch("post_task_judge.JudgeRouter") as mock_router_cls:
+            mock_judge = MagicMock()
+            mock_judge.evaluate.return_value = _make_result("pass")
+            mock_judge_cls.return_value = mock_judge
+            mock_router = MagicMock()
+            mock_router.should_run.return_value = True
+            mock_router.handle.return_value = 0
+            mock_router_cls.return_value = mock_router
+            m.run(tmp_path)
+        mock_router.should_run.assert_called_once_with("strict")
+
+    def test_skips_when_vibe(self, tmp_path, capsys):
+        m = self._hook_module()
+        self._write_risk_profile(tmp_path, "vibe")
+        code = m.run(tmp_path)
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "skipped (vibe)" in out
+
+    def test_calls_evaluate_with_correct_task_id(self, tmp_path):
+        m = self._hook_module()
+        self._write_risk_profile(tmp_path, "standard")
+        with patch.object(m, "_get_diff", return_value="diff content"), \
+             patch("post_task_judge.HarnessJudge") as mock_judge_cls, \
+             patch("post_task_judge.JudgeRouter") as mock_router_cls, \
+             patch("post_task_judge.get_session_id", return_value="test-session-123"):
+            mock_judge = MagicMock()
+            mock_judge.evaluate.return_value = _make_result("pass", "test-session-123")
+            mock_judge_cls.return_value = mock_judge
+            mock_router = MagicMock()
+            mock_router.should_run.return_value = True
+            mock_router.handle.return_value = 0
+            mock_router_cls.return_value = mock_router
+            m.run(tmp_path)
+        call_payload = mock_judge.evaluate.call_args[0][0]
+        assert call_payload.task_id == "test-session-123"
+        assert call_payload.diff == "diff content"
+
+    def test_updates_telemetry_store(self, tmp_path):
+        m = self._hook_module()
+        self._write_risk_profile(tmp_path, "standard")
+        mock_store = MagicMock()
+        with patch.object(m, "_get_diff", return_value=""), \
+             patch("post_task_judge.HarnessJudge") as mock_judge_cls, \
+             patch("post_task_judge.JudgeRouter") as mock_router_cls, \
+             patch("post_task_judge.TelemetryStore", return_value=mock_store):
+            mock_judge = MagicMock()
+            mock_judge.evaluate.return_value = _make_result("warn")
+            mock_judge_cls.return_value = mock_judge
+            mock_router = MagicMock()
+            mock_router.should_run.return_value = True
+            mock_router.handle.return_value = 0
+            mock_router_cls.return_value = mock_router
+            m.run(tmp_path)
+        mock_store.record.assert_called_once()
+        payload = mock_store.record.call_args[0][0]
+        assert payload["judge_verdict"] == "warn"
+
+    def test_defaults_to_standard_when_no_risk_profile(self, tmp_path):
+        m = self._hook_module()
+        # No risk-profile.json written
+        with patch.object(m, "_get_diff", return_value=""), \
+             patch("post_task_judge.HarnessJudge") as mock_judge_cls, \
+             patch("post_task_judge.JudgeRouter") as mock_router_cls:
+            mock_judge = MagicMock()
+            mock_judge.evaluate.return_value = _make_result("pass")
+            mock_judge_cls.return_value = mock_judge
+            mock_router = MagicMock()
+            mock_router.should_run.return_value = True
+            mock_router.handle.return_value = 0
+            mock_router_cls.return_value = mock_router
+            code = m.run(tmp_path)
+        assert code == 0
+        mock_router.should_run.assert_called_once_with("standard")
