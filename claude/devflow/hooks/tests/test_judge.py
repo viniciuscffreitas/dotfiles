@@ -290,3 +290,82 @@ class TestVerdictMapping:
         assert r.verdict == "pass"
         assert r.lob_violation is False
         assert r.duplication is False
+
+
+# ---------------------------------------------------------------------------
+# JudgeRouter
+# ---------------------------------------------------------------------------
+
+def _make_result(verdict: str, task_id: str = "r1") -> JudgeResult:
+    return JudgeResult(
+        task_id=task_id, verdict=verdict,
+        lob_violation=(verdict == "fail"), lob_evidence=None,
+        duplication=False, duplication_evidence=None,
+        type_contract_violation=False, type_contract_evidence=None,
+        unjustified_complexity=False, complexity_evidence=None,
+        naming_consistency_score=1.0, naming_evidence=None,
+        edge_case_coverage="adequate", spec_fulfilled="yes",
+        spec_evidence=None, fail_reasons=["lob_violation"] if verdict == "fail" else [],
+        raw_response=None,
+    )
+
+
+class TestJudgeRouter:
+    def setup_method(self):
+        self.router = JudgeRouter()
+
+    # should_run
+    def test_should_run_vibe_is_false(self):
+        assert self.router.should_run("vibe") is False
+
+    def test_should_run_standard_is_true(self):
+        assert self.router.should_run("standard") is True
+
+    def test_should_run_strict_is_true(self):
+        assert self.router.should_run("strict") is True
+
+    def test_should_run_human_review_is_true(self):
+        assert self.router.should_run("human_review") is True
+
+    # should_block
+    def test_should_block_strict_fail(self):
+        assert self.router.should_block("strict", _make_result("fail")) is True
+
+    def test_should_not_block_strict_warn(self):
+        assert self.router.should_block("strict", _make_result("warn")) is False
+
+    def test_should_not_block_standard_fail(self):
+        assert self.router.should_block("standard", _make_result("fail")) is False
+
+    def test_should_block_human_review_pass(self):
+        assert self.router.should_block("human_review", _make_result("pass")) is True
+
+    def test_should_block_human_review_fail(self):
+        assert self.router.should_block("human_review", _make_result("fail")) is True
+
+    # handle
+    def test_handle_writes_judge_result_json(self, tmp_path):
+        self.router.handle("standard", _make_result("pass"), tmp_path)
+        out = json.loads((tmp_path / "judge-result.json").read_text())
+        assert out["verdict"] == "pass"
+
+    def test_handle_returns_0_for_standard_fail(self, tmp_path):
+        code = self.router.handle("standard", _make_result("fail"), tmp_path)
+        assert code == 0
+
+    def test_handle_returns_1_for_strict_fail(self, tmp_path):
+        code = self.router.handle("strict", _make_result("fail"), tmp_path)
+        assert code == 1
+
+    def test_handle_writes_pending_review_for_human_review(self, tmp_path):
+        self.router.handle("human_review", _make_result("pass"), tmp_path)
+        pending_dir = tmp_path / "pending_reviews"
+        assert pending_dir.exists()
+        assert len(list(pending_dir.iterdir())) == 1
+
+    def test_handle_prints_summary(self, tmp_path, capsys):
+        self.router.handle("strict", _make_result("fail"), tmp_path)
+        out = capsys.readouterr().out
+        assert "[devflow:judge]" in out
+        assert "verdict=FAIL" in out
+        assert "oversight=STRICT" in out
