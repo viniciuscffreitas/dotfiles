@@ -1246,3 +1246,5 @@ def test_main_writes_to_sqlite_after_sessions_jsonl(tmp_path):
     call_payload = mock_store_instance.record.call_args[0][0]
     assert call_payload["task_id"] == "sqlite-test-session"
     assert "context_tokens_consumed" in call_payload
+    assert "iterations_to_completion" in call_payload
+    assert "stack" in call_payload
