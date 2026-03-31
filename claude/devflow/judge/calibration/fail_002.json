@@ -1,0 +1,21 @@
+{
+  "diff": "diff --git a/hooks/_util.py b/hooks/_util.py\n--- a/hooks/_util.py\n+++ b/hooks/_util.py\n@@ -1,5 +1,52 @@\n from __future__ import annotations\n import json\n+import time\n from pathlib import Path\n \n+class ConfigLoader:\n+    \"\"\"Singleton config loader with TTL-based caching, transformer pipeline, and validation.\"\"\"\n+    _instance = None\n+    _cache: dict = {}\n+\n+    def __new__(cls):\n+        if cls._instance is None:\n+            cls._instance = super().__new__(cls)\n+        return cls._instance\n+\n+    def load(self, key: str, transformer=None, validator=None, cache_ttl: int = 300):\n+        if key in self._cache:\n+            cached_at, value = self._cache[key]\n+            if time.time() - cached_at < cache_ttl:\n+                return value\n+        raw = self._read_raw(key)\n+        if transformer:\n+            raw = transformer(raw)\n+        if validator and not validator(raw):\n+            raise ValueError(f'Invalid config for key: {key}')\n+        self._cache[key] = (time.time(), raw)\n+        return raw\n+\n+    def _read_raw(self, key: str) -> dict:\n+        path = Path.home() / '.claude' / 'devflow' / f'{key}.json'\n+        if path.exists():\n+            return json.loads(path.read_text())\n+        return {}\n+\n+    def invalidate(self, key: str = None) -> None:\n+        if key:\n+            self._cache.pop(key, None)\n+        else:\n+            self._cache.clear()\n+\n def load_devflow_config(project_root=None):\n-    config = dict(defaults)\n-    if DEVFLOW_CONFIG_GLOBAL.exists():\n-        try:\n-            config.update(json.loads(DEVFLOW_CONFIG_GLOBAL.read_text()))\n-        except (json.JSONDecodeError, OSError):\n-            pass\n-    return config\n+    loader = ConfigLoader()\n+    return loader.load(\n+        'devflow-config',\n+        transformer=lambda raw: {**defaults, **raw},\n+        validator=lambda cfg: isinstance(cfg, dict),\n+    )",
+  "spec": "Refactor load_devflow_config to avoid re-reading the config file on every call within the same session. A simple cache is sufficient.",
+  "harness_rules": [
+    "Don't add features beyond what was asked",
+    "Three similar lines is better than a premature abstraction",
+    "No TODO without associated issue",
+    "YAGNI — don't design for hypothetical future requirements"
+  ],
+  "existing_code": "DEVFLOW_CONFIG_GLOBAL = Path.home() / '.claude' / 'devflow' / 'devflow-config.json'\n\ndef load_devflow_config(project_root=None):\n    defaults = {\n        'file_length_warn': FILE_LINES_WARN,\n        'file_length_critical': FILE_LINES_CRITICAL,\n        'learned_skills_auto_inject': True,\n    }\n    config = dict(defaults)\n    if DEVFLOW_CONFIG_GLOBAL.exists():\n        try:\n            config.update(json.loads(DEVFLOW_CONFIG_GLOBAL.read_text()))\n        except (json.JSONDecodeError, OSError):\n            pass\n    return config",
+  "feature_path": "hooks/",
+  "expected_verdict": "fail",
+  "expected_flags": {
+    "lob_violation": false,
+    "duplication": false,
+    "type_contract_violation": false,
+    "unjustified_complexity": true,
+    "spec_fulfilled": "partial"
+  },
+  "notes": "The spec asked for simple caching. The diff introduces a Singleton with TTL, transformer pipeline, validator injection, cache invalidation API, and a generic key-based loader. A module-level dict or functools.lru_cache(maxsize=1) would have been 2 lines. The ConfigLoader class is an abstraction for a one-time read of a single config file — pure YAGNI. Unjustified complexity → fail."
+}

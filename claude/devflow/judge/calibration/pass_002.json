@@ -1,0 +1,20 @@
+{
+  "diff": "diff --git a/telemetry/__init__.py b/telemetry/__init__.py\nnew file mode 100644\n+++ b/telemetry/__init__.py\n@@ -0,0 +1 @@\n+\ndiff --git a/telemetry/store.py b/telemetry/store.py\nnew file mode 100644\n+++ b/telemetry/store.py\n@@ -0,0 +1,60 @@\n+\"\"\"\n+TelemetryStore — SQLite persistence layer for devflow task telemetry.\n+\"\"\"\n+from __future__ import annotations\n+import sqlite3\n+import threading\n+from pathlib import Path\n+\n+_COLUMNS = [\n+    \"task_id\", \"timestamp\", \"task_category\", \"judge_verdict\",\n+    \"probability_score\", \"impact_score\", \"oversight_level\",\n+]\n+\n+class TelemetryStore:\n+    def __init__(self, db_path=None):\n+        self._db_path = Path(db_path) if db_path else _DEFAULT_DB\n+        self._lock = threading.Lock()\n+        self._init_schema()\n+\n+    def record(self, payload: dict) -> None:\n+        values = {col: payload.get(col) for col in _COLUMNS}\n+        ...\n+\n+    def get_recent(self, n: int = 20) -> list[dict]:\n+        ...\n+\ndiff --git a/hooks/tests/test_telemetry_store.py b/hooks/tests/test_telemetry_store.py\nnew file mode 100644\n+++ b/hooks/tests/test_telemetry_store.py\n@@ -0,0 +1,80 @@\n+class TestSchema:\n+    def test_schema_has_all_columns(self, tmp_path): ...\n+class TestRecord:\n+    def test_insert_and_retrieve(self, tmp_path): ...\n+    def test_upsert_preserves_existing_non_null(self, tmp_path): ...\n+class TestGetRecent:\n+    def test_returns_n_most_recent(self, tmp_path): ...",
+  "spec": "Add TelemetryStore SQLite persistence layer. Schema: task_executions with 31 columns covering agent behavior, quality signals, risk profile, harness signals. API: record() upsert, get_by_category(), get_recent(), get_failure_patterns(), get_context_anxiety_cases(), summary_stats(). Thread-safe via Lock. 14 tests.",
+  "harness_rules": [
+    "TDD: RED -> GREEN -> REFACTOR -> COMMIT",
+    "No TODO without associated issue",
+    "File length limits: warn at 400, block at 600"
+  ],
+  "existing_code": "# telemetry/ directory did not exist before this commit. No prior implementation.",
+  "feature_path": "telemetry/",
+  "expected_verdict": "pass",
+  "expected_flags": {
+    "lob_violation": false,
+    "duplication": false,
+    "type_contract_violation": false,
+    "unjustified_complexity": false,
+    "spec_fulfilled": "yes"
+  },
+  "notes": "New package added within its own boundary (telemetry/). Tests created alongside implementation. No imports from other devflow modules except stdlib. Clear single responsibility. Good pass case for a feature addition with full test coverage."
+}

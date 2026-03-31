@@ -1,0 +1,20 @@
+{
+  "diff": "diff --git a/hooks/file_checker.py b/hooks/file_checker.py\n--- a/hooks/file_checker.py\n+++ b/hooks/file_checker.py\n@@ -1,8 +1,12 @@\n from __future__ import annotations\n from pathlib import Path\n+from risk.profiler import TaskRiskProfiler\n+from judge.evaluator import HarnessJudge, JudgePayload\n+from judge.router import JudgeRouter\n \n def check_file(path: Path) -> tuple[bool, bool, int]:\n+    profiler = TaskRiskProfiler()\n+    profile = profiler.profile({})\n+    if profile.oversight_level.value in ('strict', 'human_review'):\n+        router = JudgeRouter()\n+        judge = HarnessJudge()\n+        # run judge inline during file check\n     return _check_length(path), _run_linter(path)",
+  "spec": "Optimize file_checker to skip slow linter checks when oversight_level is vibe, reducing hook latency for low-risk tasks.",
+  "harness_rules": [
+    "File length limits: warn at 400, block at 600",
+    "No TODO without associated issue",
+    "Subagents DO NOT spawn other subagents — all delegation flows through the Main Agent"
+  ],
+  "existing_code": "from __future__ import annotations\nfrom pathlib import Path\nfrom _util import check_file_length, ToolchainKind\n\ndef check_file(path: Path) -> tuple[bool, bool, int]:\n    warn, critical, lines = check_file_length(path)\n    return warn, critical, lines",
+  "feature_path": "hooks/",
+  "expected_verdict": "fail",
+  "expected_flags": {
+    "lob_violation": true,
+    "duplication": false,
+    "type_contract_violation": false,
+    "unjustified_complexity": false,
+    "spec_fulfilled": "yes"
+  },
+  "notes": "hooks/file_checker.py imports from risk/ and judge/ modules. This creates a circular dependency: judge/ Stop hook calls file_checker logic, and file_checker now imports judge/. The spec only asked to skip slow checks when vibe — reading the oversight level from a state file (risk-profile.json) would have been sufficient without any cross-module imports. Clear LoB violation."
+}
