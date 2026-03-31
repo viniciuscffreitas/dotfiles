@@ -1,6 +1,8 @@
 """Tests for Harness Health tracker."""
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -522,3 +524,66 @@ def test_checker_check_never_raises_on_store_failure(tmp_path):
     checker = HarnessHealthChecker()
     report = checker.check(store, skills_dir, hooks_dir)
     assert isinstance(report, HarnessHealthReport)
+
+
+# ---------------------------------------------------------------------------
+# health_report CLI
+# ---------------------------------------------------------------------------
+
+def test_health_report_default_output_contains_prefix(tmp_path):
+    import hooks.health_report as hr
+
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        hr.main([], _store=store, _skills_dir=tmp_path / "skills", _hooks_dir=tmp_path / "hooks")
+    assert "[devflow:health]" in captured.getvalue()
+
+
+def test_health_report_json_outputs_valid_json_with_overall_verdict(tmp_path):
+    import hooks.health_report as hr
+    import json as _json
+
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        hr.main(["--json"], _store=store, _skills_dir=tmp_path / "skills", _hooks_dir=tmp_path / "hooks")
+    data = _json.loads(captured.getvalue())
+    assert "overall_verdict" in data
+    assert data["overall_verdict"] in ("healthy", "degraded", "critical")
+
+
+def test_health_report_critical_exits_0_when_healthy(tmp_path):
+    import hooks.health_report as hr
+
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    ret = hr.main(["--critical"], _store=store, _skills_dir=tmp_path / "skills", _hooks_dir=tmp_path / "hooks")
+    assert ret == 0
+
+
+def test_health_report_critical_exits_1_when_critical(tmp_path):
+    import hooks.health_report as hr
+
+    db = tmp_path / "test.db"
+    store = TelemetryStore(db_path=db)
+    ts = datetime.now(tz=timezone.utc).isoformat()
+
+    for i in range(3):
+        store.record({
+            "task_id": f"t{i}",
+            "rules_triggered": "bad_hook",
+            "judge_verdict": "fail",
+            "timestamp": ts,
+        })
+
+    hooks_dir = tmp_path / "hooks"
+    hooks_dir.mkdir()
+    (hooks_dir / "bad_hook.py").write_text("# hook")
+
+    ret = hr.main(
+        ["--critical"],
+        _store=store,
+        _skills_dir=tmp_path / "skills",
+        _hooks_dir=hooks_dir,
+    )
+    assert ret == 1
