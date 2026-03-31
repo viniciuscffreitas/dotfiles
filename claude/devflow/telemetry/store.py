@@ -32,6 +32,7 @@ _COLUMNS = [
     "firewall_task_id",
     "firewall_success",
     "firewall_duration_ms",
+    "instincts_captured_count",
 ]
 
 _CREATE_TABLE = """
@@ -70,7 +71,8 @@ CREATE TABLE IF NOT EXISTS task_executions (
     firewall_delegated              BOOLEAN,
     firewall_task_id                TEXT,
     firewall_success                BOOLEAN,
-    firewall_duration_ms            REAL
+    firewall_duration_ms            REAL,
+    instincts_captured_count        INTEGER
 )
 """
 
@@ -103,6 +105,7 @@ class TelemetryStore:
                     ("firewall_task_id", "TEXT"),
                     ("firewall_success", "BOOLEAN"),
                     ("firewall_duration_ms", "REAL"),
+                    ("instincts_captured_count", "INTEGER"),
                 ]
                 for col, col_type in _new_cols:
                     try:

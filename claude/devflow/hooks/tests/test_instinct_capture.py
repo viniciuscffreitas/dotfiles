@@ -619,3 +619,29 @@ def test_generate_recommendations_instincts_pending_over_5_triggers_medium():
     instinct_recs = [r for r in recs if "instinct" in r.action.lower()]
     assert len(instinct_recs) >= 1
     assert instinct_recs[0].priority == "medium"
+
+
+# ---------------------------------------------------------------------------
+# TelemetryStore migration — instincts_captured_count
+# ---------------------------------------------------------------------------
+
+from telemetry.store import TelemetryStore
+
+
+def test_telemetry_store_has_instincts_captured_count_column(tmp_path):
+    """instincts_captured_count column exists after schema init."""
+    import sqlite3
+    db = tmp_path / "test.db"
+    TelemetryStore(db_path=db)
+    conn = sqlite3.connect(str(db))
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(task_executions)").fetchall()]
+    conn.close()
+    assert "instincts_captured_count" in cols
+
+
+def test_telemetry_store_records_instincts_captured_count(tmp_path):
+    db = tmp_path / "test.db"
+    store = TelemetryStore(db_path=db)
+    store.record({"task_id": "t001", "instincts_captured_count": 3})
+    rows = store.get_recent(n=1)
+    assert rows[0]["instincts_captured_count"] == 3
