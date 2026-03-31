@@ -142,3 +142,44 @@ def test_import_boundary_passes_on_empty_diff(tmp_path):
     result = engine.run("import_boundary", "", tmp_path)
     assert result.passed is True
     assert result.files_checked == 0
+
+
+# ---------------------------------------------------------------------------
+# file_size
+# ---------------------------------------------------------------------------
+
+def _make_diff_for_file(path: str) -> str:
+    return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,1 +1,2 @@\n+# change\n"
+
+
+def test_file_size_blocks_at_601_lines(tmp_path):
+    src = tmp_path / "lib" / "features" / "auth" / "big.dart"
+    src.parent.mkdir(parents=True)
+    src.write_text("\n" * 601)
+    diff = _make_diff_for_file("lib/features/auth/big.dart")
+    engine = LinterEngine()
+    result = engine.run("file_size", diff, tmp_path)
+    assert result.passed is False
+    assert any("601" in v or "600" in v for v in result.violations)
+
+
+def test_file_size_warns_at_450_lines_but_passes(tmp_path):
+    src = tmp_path / "lib" / "features" / "home" / "page.dart"
+    src.parent.mkdir(parents=True)
+    src.write_text("\n" * 450)
+    diff = _make_diff_for_file("lib/features/home/page.dart")
+    engine = LinterEngine()
+    result = engine.run("file_size", diff, tmp_path)
+    assert result.passed is True
+    assert len(result.violations) == 1  # warning logged but not blocking
+
+
+def test_file_size_passes_for_small_file(tmp_path):
+    src = tmp_path / "lib" / "features" / "auth" / "small.dart"
+    src.parent.mkdir(parents=True)
+    src.write_text("void main() {}\n" * 10)
+    diff = _make_diff_for_file("lib/features/auth/small.dart")
+    engine = LinterEngine()
+    result = engine.run("file_size", diff, tmp_path)
+    assert result.passed is True
+    assert result.violations == []

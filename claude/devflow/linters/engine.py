@@ -13,6 +13,9 @@ _DIFF_FILE_RE = re.compile(r"^diff --git a/(.+) b/(.+)$")
 _DART_IMPORT_RE = re.compile(r"""import\s+['"]package:[^/]+/features/([^/]+)/""")
 _FEATURES_PATH_RE = re.compile(r"lib/features/([^/]+)/")
 
+_WARN_LINES = 400
+_BLOCK_LINES = 600
+
 
 @dataclass
 class LinterResult:
@@ -101,7 +104,47 @@ def _lint_import_boundary(diff: str, project_root: Path) -> LinterResult:
 
 
 def _lint_file_size(diff: str, project_root: Path) -> LinterResult:
-    return LinterResult("file_size", True, [], 0, 0.0)
+    t0 = time.monotonic()
+    violations: list[str] = []
+    blocked = False
+    modified_files: set[str] = set()
+
+    for line in diff.splitlines():
+        m = _DIFF_FILE_RE.match(line)
+        if m:
+            modified_files.add(m.group(2))
+
+    files_checked = len(modified_files)
+    for rel_path in modified_files:
+        abs_path = project_root / rel_path
+        if abs_path.exists():
+            try:
+                line_count = len(abs_path.read_text(encoding="utf-8", errors="ignore").splitlines())
+            except OSError:
+                continue
+        else:
+            try:
+                result = subprocess.run(
+                    ["git", "show", f"HEAD:{rel_path}"],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode != 0:
+                    continue
+                line_count = len(result.stdout.splitlines())
+            except Exception:  # noqa: BLE001
+                continue
+
+        if line_count > _BLOCK_LINES:
+            violations.append(f"{rel_path} — {line_count} lines (limit: {_BLOCK_LINES})")
+            blocked = True
+        elif line_count > _WARN_LINES:
+            violations.append(f"{rel_path} — {line_count} lines (limit: {_WARN_LINES})")
+
+    duration_ms = (time.monotonic() - t0) * 1000
+    return LinterResult("file_size", not blocked, violations, files_checked, duration_ms)
 
 
 def _lint_coverage_gate(diff: str, project_root: Path) -> LinterResult:
