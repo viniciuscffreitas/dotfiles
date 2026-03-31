@@ -407,6 +407,15 @@ def test_simplification_candidates_one_entry_per_idle_hook():
     assert "CLAUDE.md" in result[0]
 
 
+def test_simplification_candidates_one_entry_per_slow_hook():
+    checker = HarnessHealthChecker()
+    hooks = [_slow_hook("slow-hook", avg_ms=8000.0)]
+    result = checker._build_simplification_candidates([], hooks)
+    assert len(result) == 1
+    assert "slow-hook" in result[0]
+    assert "8000ms" in result[0]
+
+
 # ---------------------------------------------------------------------------
 # _overall_verdict
 # ---------------------------------------------------------------------------
