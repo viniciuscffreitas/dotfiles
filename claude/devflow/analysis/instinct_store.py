@@ -74,3 +74,48 @@ class InstinctStore:
             except (json.JSONDecodeError, TypeError):
                 continue
         return result
+
+    def update_status(
+        self,
+        instinct_id: str,
+        project: str,
+        status: str,
+        promoted_to: str | None = None,
+    ) -> bool:
+        """
+        Rewrites the project JSONL updating the matching instinct.
+        Returns True if found and updated, False otherwise.
+        """
+        instincts = self.load(project)
+        found = False
+        for i in instincts:
+            if i.id == instinct_id:
+                i.status = status
+                i.promoted_to = promoted_to
+                found = True
+                break
+        if not found:
+            return False
+        p = self._path(project)
+        p.write_text(
+            "\n".join(json.dumps(dataclasses.asdict(i)) for i in instincts) + "\n",
+            encoding="utf-8",
+        )
+        return True
+
+    def pending(self, project: str) -> list[Instinct]:
+        """Return instincts with status='pending' for a project."""
+        return [i for i in self.load(project) if i.status == "pending"]
+
+    def report(self, project: str) -> InstinctReport:
+        """Return InstinctReport for a project."""
+        instincts = self.load(project)
+        return InstinctReport(
+            generated_at=datetime.now(tz=timezone.utc).isoformat(),
+            project=project,
+            total_captured=len(instincts),
+            pending_count=sum(1 for i in instincts if i.status == "pending"),
+            promoted_count=sum(1 for i in instincts if i.status == "promoted"),
+            dismissed_count=sum(1 for i in instincts if i.status == "dismissed"),
+            instincts=instincts,
+        )
