@@ -77,6 +77,21 @@ def get_quality_commands(
         mvn = str(mvnw) if mvnw.exists() else shutil.which("mvn")
         if mvn:
             return [{"label": "mvn compile", "cmd": [mvn, "compile", "-q"], "timeout": 120}]
+    if toolchain == ToolchainKind.PYTHON:
+        cmds = [
+            {
+                "label": "pytest",
+                "cmd": ["python3", "-m", "pytest", "--tb=short", "-q"],
+                "timeout": 120,
+            }
+        ]
+        if shutil.which("mypy"):
+            cmds.append({
+                "label": "mypy",
+                "cmd": ["mypy", ".", "--ignore-missing-imports"],
+                "timeout": 60,
+            })
+        return cmds
     return []
 
 

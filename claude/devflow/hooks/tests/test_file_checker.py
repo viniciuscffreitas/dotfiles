@@ -107,3 +107,88 @@ def test_flutter_checker_no_dart_binary(tmp_path, monkeypatch):
     f.write_text("class Widget {}")
     issues = _check_flutter(f, tmp_path)
     assert issues == []
+
+
+def test_python_checker_calls_ruff_check_and_format(tmp_path, monkeypatch):
+    """ruff check --fix and ruff format must both be called."""
+    monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/ruff" if x == "ruff" else None)
+    f = tmp_path / "main.py"
+    f.write_text("x=1")
+
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return 0, ""
+
+    monkeypatch.setattr("file_checker.run_command", fake_run)
+    from file_checker import _check_python
+    _check_python(f, tmp_path)
+
+    check_calls = [c for c in calls if "check" in c]
+    format_calls = [c for c in calls if "format" in c]
+    assert len(check_calls) == 1
+    assert len(format_calls) == 1
+    assert "--fix" in check_calls[0]
+
+
+def test_python_checker_skips_when_ruff_not_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda x: None)
+    f = tmp_path / "main.py"
+    f.write_text("x=1")
+    from file_checker import _check_python
+    issues = _check_python(f, tmp_path)
+    assert issues == []
+
+
+def test_python_checker_always_returns_no_issues(tmp_path, monkeypatch):
+    """ruff fixes in place — errors are never reported as issues."""
+    monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/ruff" if x == "ruff" else None)
+    monkeypatch.setattr("file_checker.run_command", lambda *a, **kw: (1, "some error"))
+    f = tmp_path / "main.py"
+    f.write_text("x=1")
+    from file_checker import _check_python
+    issues = _check_python(f, tmp_path)
+    assert issues == []
+
+
+def test_python_checker_ruff_check_before_format(tmp_path, monkeypatch):
+    """ruff check --fix must run before ruff format."""
+    monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/ruff" if x == "ruff" else None)
+    f = tmp_path / "main.py"
+    f.write_text("x=1")
+
+    order = []
+    def fake_run(cmd, **kwargs):
+        if "check" in cmd:
+            order.append("check")
+        elif "format" in cmd:
+            order.append("format")
+        return 0, ""
+
+    monkeypatch.setattr("file_checker.run_command", fake_run)
+    from file_checker import _check_python
+    _check_python(f, tmp_path)
+    assert order == ["check", "format"]
+
+
+def test_non_python_toolchain_does_not_trigger_python_check(tmp_path, monkeypatch):
+    """Python checker must not fire when toolchain is not PYTHON."""
+    import file_checker
+    from _util import ToolchainKind
+
+    f = tmp_path / "server.go"
+    f.write_text("package main")
+
+    python_check_called = [False]
+    def spy(*args, **kwargs):
+        python_check_called[0] = True
+        return []
+
+    monkeypatch.setattr(file_checker, "_check_python", spy)
+    monkeypatch.setattr("file_checker.detect_toolchain", lambda *a: (ToolchainKind.GO, tmp_path))
+    monkeypatch.setattr("file_checker.load_devflow_config", lambda *a: {})
+    monkeypatch.setattr("file_checker.read_hook_stdin",
+                        lambda: {"tool_input": {"file_path": str(f)}})
+
+    file_checker.main()
+    assert not python_check_called[0]

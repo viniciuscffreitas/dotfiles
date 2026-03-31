@@ -42,6 +42,7 @@ class ToolchainKind(Enum):
     MAVEN = auto()
     RUST = auto()
     GO = auto()
+    PYTHON = auto()
 
 
 _TOOLCHAIN_FINGERPRINTS: list[tuple[str, ToolchainKind]] = [
@@ -51,6 +52,8 @@ _TOOLCHAIN_FINGERPRINTS: list[tuple[str, ToolchainKind]] = [
     ("mvnw", ToolchainKind.MAVEN),
     ("Cargo.toml", ToolchainKind.RUST),
     ("go.mod", ToolchainKind.GO),
+    ("pyproject.toml", ToolchainKind.PYTHON),
+    ("setup.py", ToolchainKind.PYTHON),
 ]
 
 TOOLCHAIN_FINGERPRINT_MAP: dict[ToolchainKind, str] = {

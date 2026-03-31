@@ -5,6 +5,7 @@ Also cleans up the discovery-ran marker so no future session inherits stale stat
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -23,7 +24,17 @@ def _has_active_spec() -> tuple[bool, str]:
         try:
             data = json.loads(active_file.read_text())
             status = data.get("status", "")
+
+            if status == "COMPLETED":
+                active_file.unlink(missing_ok=True)
+                return False, ""
+
             if status in ("IMPLEMENTING", "PENDING", "in_progress"):
+                # Check cwd ownership — if present and mismatched, spec belongs to another project
+                spec_cwd = data.get("cwd")
+                if spec_cwd and spec_cwd != os.getcwd():
+                    return False, ""
+
                 # Check timestamp — abandon if too old
                 started_at = data.get("started_at", 0)
                 if started_at and (time.time() - started_at) > SPEC_EXPIRY_SECONDS:
@@ -32,7 +43,6 @@ def _has_active_spec() -> tuple[bool, str]:
                 return True, f"{plan_path} ({status})"
         except (json.JSONDecodeError, OSError) as e:
             # Fail-safe: corrupt file should NOT block forever
-            # Check file age as fallback
             try:
                 file_age = time.time() - active_file.stat().st_mtime
                 if file_age > SPEC_EXPIRY_SECONDS:
@@ -54,6 +64,12 @@ def _cleanup_discovery_marker() -> None:
 
 
 def main() -> int:
+    session_id = os.environ.get("CLAUDE_SESSION_ID", "").strip()
+    if not session_id or session_id == "default":
+        print("[devflow] no session ID — guard bypassed", file=sys.stderr)
+        _cleanup_discovery_marker()
+        return 0
+
     active, description = _has_active_spec()
     if active:
         reason = (

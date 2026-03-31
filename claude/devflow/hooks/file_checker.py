@@ -141,12 +141,22 @@ def _check_maven(file_path: Path, project_root: Path) -> list[str]:
     return issues
 
 
+def _check_python(file_path: Path, project_root: Path) -> list[str]:
+    ruff = shutil.which("ruff")
+    if not ruff:
+        return []
+    run_command([ruff, "check", str(file_path), "--fix"], cwd=project_root)
+    run_command([ruff, "format", str(file_path)], cwd=project_root)
+    return []
+
+
 _CHECKERS = {
     ToolchainKind.NODEJS: _check_nodejs,
     ToolchainKind.FLUTTER: _check_flutter,
     ToolchainKind.GO: _check_go,
     ToolchainKind.RUST: _check_rust,
     ToolchainKind.MAVEN: _check_maven,
+    ToolchainKind.PYTHON: _check_python,
 }
 
 

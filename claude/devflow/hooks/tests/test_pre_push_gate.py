@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -63,3 +64,49 @@ def test_quality_commands_go(tmp_path):
 def test_quality_commands_unknown(tmp_path):
     cmds = get_quality_commands(None, tmp_path)
     assert cmds == []
+
+
+def test_quality_commands_python_returns_pytest(tmp_path, monkeypatch):
+    """Python project must run pytest."""
+    monkeypatch.setattr(shutil, "which", lambda x: None)
+    cmds = get_quality_commands(ToolchainKind.PYTHON, tmp_path)
+    assert len(cmds) >= 1
+    assert cmds[0]["label"] == "pytest"
+    assert "python3" in cmds[0]["cmd"]
+    assert "-m" in cmds[0]["cmd"]
+    assert "pytest" in cmds[0]["cmd"]
+
+
+def test_quality_commands_python_pytest_flags(tmp_path, monkeypatch):
+    """pytest must run with --tb=short -q."""
+    monkeypatch.setattr(shutil, "which", lambda x: None)
+    cmds = get_quality_commands(ToolchainKind.PYTHON, tmp_path)
+    pytest_cmd = cmds[0]["cmd"]
+    assert "--tb=short" in pytest_cmd
+    assert "-q" in pytest_cmd
+
+
+def test_quality_commands_python_includes_mypy_when_available(tmp_path, monkeypatch):
+    """When mypy is on PATH, it is added as second check."""
+    monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/mypy" if x == "mypy" else None)
+    cmds = get_quality_commands(ToolchainKind.PYTHON, tmp_path)
+    assert len(cmds) == 2
+    assert cmds[1]["label"] == "mypy"
+    assert "--ignore-missing-imports" in cmds[1]["cmd"]
+
+
+def test_quality_commands_python_skips_mypy_gracefully(tmp_path, monkeypatch):
+    """When mypy is not on PATH, only pytest is returned."""
+    monkeypatch.setattr(shutil, "which", lambda x: None)
+    cmds = get_quality_commands(ToolchainKind.PYTHON, tmp_path)
+    assert len(cmds) == 1
+    assert all("mypy" not in c["label"] for c in cmds)
+
+
+def test_quality_commands_non_python_no_pytest(tmp_path, monkeypatch):
+    """Non-Python toolchains must not include pytest."""
+    monkeypatch.setattr(shutil, "which", lambda x: None)
+    for kind in [ToolchainKind.FLUTTER, ToolchainKind.GO, ToolchainKind.RUST]:
+        cmds = get_quality_commands(kind, tmp_path)
+        assert all("pytest" not in c["label"] for c in cmds), \
+            f"pytest found in {kind} commands: {cmds}"

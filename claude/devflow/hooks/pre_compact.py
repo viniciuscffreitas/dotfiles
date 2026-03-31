@@ -13,25 +13,17 @@ from _util import get_session_id, get_state_dir, read_hook_stdin
 
 
 def _find_active_spec() -> dict | None:
-    plans_dir = Path.home() / ".claude" / "plans"
-    if not plans_dir.exists():
+    state_dir = get_state_dir()
+    active_file = state_dir / "active-spec.json"
+    if not active_file.exists():
         return None
-
-    def safe_mtime(p: Path) -> float:
-        try:
-            return p.stat().st_mtime
-        except OSError:
-            return 0.0
-
-    plan_files = sorted(plans_dir.glob("*.md"), key=safe_mtime, reverse=True)
-    for plan_file in plan_files[:5]:
-        try:
-            content = plan_file.read_text()
-            if "IMPLEMENTING" in content or "in_progress" in content.lower():
-                return {"plan_path": str(plan_file), "status": "IMPLEMENTING"}
-        except OSError:
-            continue
-    return None
+    try:
+        data = json.loads(active_file.read_text())
+        if data.get("status") != "IMPLEMENTING":
+            return None
+        return {"plan_path": data.get("plan_path", ""), "status": "IMPLEMENTING"}
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def _load_project_profile() -> dict | None:

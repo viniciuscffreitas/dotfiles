@@ -9,39 +9,87 @@ from pre_compact import _find_active_spec
 from post_compact_restore import main as restore_main
 
 
-# --- pre_compact: _find_active_spec ---
+# --- pre_compact: _find_active_spec (reads active-spec.json via get_state_dir) ---
 
-def test_find_active_spec_implementing(tmp_path):
-    plans = tmp_path / ".claude" / "plans"
-    plans.mkdir(parents=True)
-    (plans / "task1.md").write_text("Status: IMPLEMENTING\nDo stuff")
-    with patch("pre_compact.Path.home", return_value=tmp_path):
+def test_find_active_spec_returns_plan_path_for_implementing(tmp_path):
+    state_dir = tmp_path / "s" / "test"
+    state_dir.mkdir(parents=True)
+    data = {"status": "IMPLEMENTING", "plan_path": "/plans/feat.md"}
+    (state_dir / "active-spec.json").write_text(json.dumps(data))
+    with patch("pre_compact.get_state_dir", return_value=state_dir):
+        result = _find_active_spec()
+    assert result is not None
+    assert result["plan_path"] == "/plans/feat.md"
+
+
+def test_find_active_spec_returns_implementing_status(tmp_path):
+    state_dir = tmp_path / "s" / "test"
+    state_dir.mkdir(parents=True)
+    data = {"status": "IMPLEMENTING", "plan_path": "/plans/feat.md"}
+    (state_dir / "active-spec.json").write_text(json.dumps(data))
+    with patch("pre_compact.get_state_dir", return_value=state_dir):
         result = _find_active_spec()
     assert result is not None
     assert result["status"] == "IMPLEMENTING"
-    assert "task1.md" in result["plan_path"]
 
 
-def test_find_active_spec_in_progress(tmp_path):
-    plans = tmp_path / ".claude" / "plans"
-    plans.mkdir(parents=True)
-    (plans / "wip.md").write_text("This task is in_progress right now")
-    with patch("pre_compact.Path.home", return_value=tmp_path):
-        result = _find_active_spec()
-    assert result is not None
-
-
-def test_find_active_spec_none(tmp_path):
-    plans = tmp_path / ".claude" / "plans"
-    plans.mkdir(parents=True)
-    (plans / "done.md").write_text("Status: COMPLETED\nAll done")
-    with patch("pre_compact.Path.home", return_value=tmp_path):
+def test_find_active_spec_returns_none_when_no_file(tmp_path):
+    state_dir = tmp_path / "s" / "test"
+    state_dir.mkdir(parents=True)
+    with patch("pre_compact.get_state_dir", return_value=state_dir):
         result = _find_active_spec()
     assert result is None
 
 
-def test_find_active_spec_no_plans_dir(tmp_path):
-    with patch("pre_compact.Path.home", return_value=tmp_path):
+def test_find_active_spec_returns_none_for_pending(tmp_path):
+    state_dir = tmp_path / "s" / "test"
+    state_dir.mkdir(parents=True)
+    data = {"status": "PENDING", "plan_path": "/plans/task.md"}
+    (state_dir / "active-spec.json").write_text(json.dumps(data))
+    with patch("pre_compact.get_state_dir", return_value=state_dir):
+        result = _find_active_spec()
+    assert result is None
+
+
+def test_find_active_spec_returns_none_for_completed(tmp_path):
+    state_dir = tmp_path / "s" / "test"
+    state_dir.mkdir(parents=True)
+    data = {"status": "COMPLETED", "plan_path": "/plans/done.md"}
+    (state_dir / "active-spec.json").write_text(json.dumps(data))
+    with patch("pre_compact.get_state_dir", return_value=state_dir):
+        result = _find_active_spec()
+    assert result is None
+
+
+def test_find_active_spec_returns_none_for_invalid_json(tmp_path):
+    state_dir = tmp_path / "s" / "test"
+    state_dir.mkdir(parents=True)
+    (state_dir / "active-spec.json").write_text("{invalid json!!!")
+    with patch("pre_compact.get_state_dir", return_value=state_dir):
+        result = _find_active_spec()
+    assert result is None
+
+
+def test_find_active_spec_does_not_scan_md_files(tmp_path):
+    """Verify no filesystem glob scanning of .md files occurs."""
+    state_dir = tmp_path / "s" / "test"
+    state_dir.mkdir(parents=True)
+    data = {"status": "IMPLEMENTING", "plan_path": "/plans/feat.md"}
+    (state_dir / "active-spec.json").write_text(json.dumps(data))
+    with (
+        patch("pre_compact.get_state_dir", return_value=state_dir),
+        patch.object(Path, "glob") as mock_glob,
+    ):
+        _find_active_spec()
+    mock_glob.assert_not_called()
+
+
+def test_find_active_spec_returns_none_for_paused(tmp_path):
+    state_dir = tmp_path / "s" / "test"
+    state_dir.mkdir(parents=True)
+    data = {"status": "PAUSED", "plan_path": "/plans/paused.md"}
+    (state_dir / "active-spec.json").write_text(json.dumps(data))
+    with patch("pre_compact.get_state_dir", return_value=state_dir):
         result = _find_active_spec()
     assert result is None
 

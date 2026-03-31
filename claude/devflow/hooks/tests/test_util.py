@@ -183,3 +183,17 @@ def test_get_bash_command_no_tool_input():
 
 def test_get_bash_command_empty():
     assert get_bash_command({"tool_input": {"command": ""}}) is None
+
+
+def test_detect_python_toolchain_pyproject_toml(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]")
+    kind, root = detect_toolchain(tmp_path)
+    assert kind == ToolchainKind.PYTHON
+    assert root == tmp_path
+
+
+def test_detect_python_toolchain_setup_py(tmp_path):
+    (tmp_path / "setup.py").write_text("from setuptools import setup")
+    kind, root = detect_toolchain(tmp_path)
+    assert kind == ToolchainKind.PYTHON
+    assert root == tmp_path
