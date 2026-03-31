@@ -469,3 +469,92 @@ def test_capture_skips_when_tool_use_count_less_than_3(tmp_path):
     ):
         code = _ic.main()
     assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# instinct_review CLI
+# ---------------------------------------------------------------------------
+
+import subprocess as _sprev
+
+_REVIEW_CLI = str(Path(__file__).parent.parent / "instinct_review.py")
+
+
+def _run_review(*args: str, input_text: str = "") -> tuple[str, int]:
+    result = _sprev.run(
+        ["python3.13", _REVIEW_CLI, *args],
+        capture_output=True,
+        text=True,
+        input=input_text,
+    )
+    return result.stdout + result.stderr, result.returncode
+
+
+def test_review_default_output_contains_devflow_instincts_label():
+    out, code = _run_review("--project", "nonexistent-project-xyzzy")
+    assert code == 0
+    assert "[devflow:instincts]" in out
+
+
+def test_review_json_output_is_valid_json_with_required_keys():
+    out, code = _run_review("--project", "nonexistent-project-xyzzy", "--json")
+    assert code == 0
+    data = json.loads(out)
+    assert "pending_count" in data
+    assert "project" in data
+
+
+def test_review_json_all_aggregates_across_projects(tmp_path):
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="proj-a", id="aa000001"))
+    store.append(_make_instinct(project="proj-b", id="bb000001"))
+
+    from io import StringIO
+    import sys as _sys
+    old_stdout = _sys.stdout
+    _sys.stdout = buf = StringIO()
+    try:
+        with patch("instinct_review._INSTINCTS_DIR", tmp_path):
+            with patch("instinct_review.InstinctStore", return_value=store):
+                review_main(["--all", "--json"])
+    finally:
+        _sys.stdout = old_stdout
+
+    data = json.loads(buf.getvalue())
+    assert isinstance(data, list)
+    projects = {d["project"] for d in data}
+    assert "proj-a" in projects
+    assert "proj-b" in projects
+
+
+def test_review_promote_updates_status_to_promoted(tmp_path):
+    from instinct_review import _promote
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="my-proj", id="prm12345", status="pending"))
+    instinct = store.load("my-proj")[0]
+    rules_file = tmp_path / "rules.md"
+
+    with patch("builtins.input", return_value=str(rules_file)):
+        _promote(store, instinct, "my-proj")
+
+    updated = store.load("my-proj")[0]
+    assert updated.status == "promoted"
+    assert updated.promoted_to == str(rules_file)
+    assert rules_file.exists()
+    assert "Use Riverpod for state." in rules_file.read_text()
+
+
+def test_review_dismiss_updates_status_to_dismissed(tmp_path):
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="dismiss-proj", id="dis12345", status="pending"))
+
+    with (
+        patch("instinct_review.InstinctStore", return_value=store),
+        patch("builtins.input", return_value="d"),
+    ):
+        review_main(["--project", "dismiss-proj"])
+
+    updated = store.load("dismiss-proj")[0]
+    assert updated.status == "dismissed"
