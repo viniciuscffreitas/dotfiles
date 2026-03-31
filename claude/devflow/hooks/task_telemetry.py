@@ -26,6 +26,13 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 from _util import get_session_id, read_hook_stdin
 
+# SQLite analytics layer — dual-write partner to sessions.jsonl
+try:
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from telemetry.store import TelemetryStore
+except ImportError:
+    TelemetryStore = None  # type: ignore[assignment,misc]
+
 TELEMETRY_DIR = Path.home() / ".claude" / "devflow" / "telemetry"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
@@ -333,6 +340,18 @@ def main() -> int:
         log_path.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
     except OSError:
         pass
+
+    # Dual-write to SQLite analytics layer
+    if TelemetryStore is not None:
+        try:
+            TelemetryStore().record({
+                "task_id": record["session_id"],
+                "context_tokens_consumed": record["total_tokens"],
+                "iterations_to_completion": len(record["phases"]),
+                "stack": record["project"],
+            })
+        except Exception as exc:
+            print(f"[devflow:telemetry] warning: SQLite write failed: {exc}", file=sys.stderr)
 
     return 0
 

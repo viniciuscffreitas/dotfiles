@@ -1185,3 +1185,64 @@ def test_parse_session_second_spec_cycle_resets_inference_state(tmp_path):
     # Second cycle's task_id must be feat2, not feat1
     second_impl = [p for p in phases if p["phase"] == "IMPLEMENTING"][1]
     assert second_impl["task_id"] == "feat2.md"
+
+
+# ---------------------------------------------------------------------------
+# TelemetryStore integration
+# ---------------------------------------------------------------------------
+
+def test_main_writes_to_sqlite_after_sessions_jsonl(tmp_path):
+    """Verify TelemetryStore.record() is called at end of main()."""
+    from unittest.mock import patch, MagicMock
+    import task_telemetry
+
+    # Build a minimal session JSONL with a PENDING phase
+    projects_dir = tmp_path / "projects"
+    slug = "-Users-vini-Developer-agents"
+    session_dir = projects_dir / slug
+    session_dir.mkdir(parents=True)
+    session_jsonl = session_dir / "sqlite-test-session.jsonl"
+    session_jsonl.write_text(
+        json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-03-31T00:00:00Z",
+            "message": {
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+                "content": [{
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "Write",
+                    "input": {
+                        "file_path": "/some/path/active-spec.json",
+                        "content": json.dumps({
+                            "status": "PENDING",
+                            "plan_path": "test sqlite integration",
+                        }),
+                    },
+                }],
+            },
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    telemetry_dir = tmp_path / "telemetry"
+    telemetry_dir.mkdir()
+    mock_store_instance = MagicMock()
+
+    with (
+        patch.object(task_telemetry, "TELEMETRY_DIR", telemetry_dir),
+        patch.object(task_telemetry, "PROJECTS_DIR", projects_dir),
+        patch("task_telemetry.read_hook_stdin", return_value={
+            "session_id": "sqlite-test-session",
+            "cwd": "/Users/vini/Developer/agents",
+        }),
+        patch("task_telemetry.TelemetryStore", return_value=mock_store_instance) as MockClass,
+    ):
+        result = main()
+
+    assert result == 0
+    MockClass.assert_called_once()
+    mock_store_instance.record.assert_called_once()
+    call_payload = mock_store_instance.record.call_args[0][0]
+    assert call_payload["task_id"] == "sqlite-test-session"
+    assert "context_tokens_consumed" in call_payload
