@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from contextlib import closing
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 _TELEMETRY_DIR = Path.home() / ".claude" / "devflow" / "telemetry"
 _DEFAULT_DB = _TELEMETRY_DIR / "devflow.db"
@@ -92,12 +93,15 @@ class TelemetryStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_schema(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             with closing(self._connect()) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute(_CREATE_TABLE)
                 # Migrate existing databases — idempotent via try/except
                 _new_cols = [
@@ -116,6 +120,22 @@ class TelemetryStore:
                         pass  # column already exists
                 conn.commit()
 
+    def _write_with_retry(
+        self, fn: "Callable[[sqlite3.Connection], None]", max_retries: int = 3
+    ) -> None:
+        """Execute fn(conn) inside a transaction; retry up to max_retries on lock errors."""
+        for attempt in range(max_retries):
+            try:
+                with self._lock, closing(self._connect()) as conn:
+                    with conn:
+                        fn(conn)
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e) and attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                raise
+
     def record(self, payload: dict) -> None:
         """Upsert a task record. Missing columns default to None for new rows;
         existing non-null values are preserved for updates."""
@@ -131,10 +151,7 @@ class TelemetryStore:
             f"INSERT INTO task_executions ({cols}) VALUES ({placeholders}) "
             f"ON CONFLICT(task_id) DO UPDATE SET {update_clauses}"
         )
-        with self._lock:
-            with closing(self._connect()) as conn:
-                conn.execute(sql, values)
-                conn.commit()
+        self._write_with_retry(lambda conn: conn.execute(sql, values))
 
     def get_by_category(self, category: str) -> list[dict]:
         with closing(self._connect()) as conn:
