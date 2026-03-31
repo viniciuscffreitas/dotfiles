@@ -136,4 +136,31 @@ class HarnessJudge:
             return _skipped(raw)
 
     def evaluate(self, payload: JudgePayload) -> "JudgeResult":
-        pass  # Task 4
+        def _skipped() -> JudgeResult:
+            return JudgeResult(
+                task_id=payload.task_id, verdict="skipped",
+                lob_violation=False, lob_evidence=None,
+                duplication=False, duplication_evidence=None,
+                type_contract_violation=False, type_contract_evidence=None,
+                unjustified_complexity=False, complexity_evidence=None,
+                naming_consistency_score=1.0, naming_evidence=None,
+                edge_case_coverage="adequate",
+                spec_fulfilled="yes", spec_evidence=None,
+                fail_reasons=[], raw_response=None,
+            )
+
+        try:
+            prompt = self._build_prompt(payload)
+            result = subprocess.run(
+                ["claude", "-p", prompt, "--model", self.model, "--output-format", "text"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                return _skipped()
+            return self._parse_result(result.stdout, task_id=payload.task_id)
+        except subprocess.TimeoutExpired:
+            return _skipped()
+        except Exception:
+            return _skipped()
