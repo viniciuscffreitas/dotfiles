@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import closing
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -86,7 +87,7 @@ class TelemetryStore:
     def _init_schema(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 conn.execute(_CREATE_TABLE)
                 conn.commit()
 
@@ -96,7 +97,6 @@ class TelemetryStore:
         values = {col: payload.get(col) for col in _COLUMNS}
         cols = ", ".join(_COLUMNS)
         placeholders = ", ".join(f":{col}" for col in _COLUMNS)
-        # On conflict: preserve existing non-null value via COALESCE
         update_clauses = ", ".join(
             f"{col} = COALESCE(excluded.{col}, task_executions.{col})"
             for col in _COLUMNS
@@ -107,28 +107,32 @@ class TelemetryStore:
             f"ON CONFLICT(task_id) DO UPDATE SET {update_clauses}"
         )
         with self._lock:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 conn.execute(sql, values)
                 conn.commit()
 
     def get_by_category(self, category: str) -> list[dict]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM task_executions WHERE task_category = ?", (category,)
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
     def get_recent(self, n: int = 20) -> list[dict]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM task_executions ORDER BY rowid DESC LIMIT ?", (n,)
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
     def get_failure_patterns(self, days: int = 30) -> list[dict]:
-        """Records where judge_verdict in ('warn', 'fail') within the last N days."""
+        """Records where judge_verdict in ('warn', 'fail') within the last N days.
+
+        Timestamps must be ISO 8601 with UTC offset (e.g. '2026-03-31T00:00:00+00:00')
+        for lexicographic comparison to be correct.
+        """
         cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days)).isoformat()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM task_executions "
                 "WHERE judge_verdict IN ('warn', 'fail') AND timestamp >= ?",
@@ -138,7 +142,7 @@ class TelemetryStore:
 
     def get_context_anxiety_cases(self, threshold: int = 60_000) -> list[dict]:
         """Records where context_tokens_at_first_action > threshold."""
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM task_executions WHERE context_tokens_at_first_action > ?",
                 (threshold,),
@@ -146,7 +150,7 @@ class TelemetryStore:
         return [_row_to_dict(r) for r in rows]
 
     def summary_stats(self) -> dict:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             total = conn.execute(
                 "SELECT COUNT(*) FROM task_executions"
             ).fetchone()[0]
