@@ -40,5 +40,37 @@ class InstinctReport:
 
 
 class InstinctStore:
-    """Placeholder for InstinctStore class."""
-    pass
+    """
+    Persists instincts as JSONL per project.
+    Storage: ~/.claude/devflow/instincts/{project}.jsonl
+    One Instinct per line, append-only.
+    """
+
+    def __init__(self, base_dir: Path = _INSTINCTS_DIR) -> None:
+        self._base = base_dir
+
+    def _path(self, project: str) -> Path:
+        return self._base / f"{project}.jsonl"
+
+    def append(self, instinct: Instinct) -> None:
+        """Append instinct to project file. Creates file if missing."""
+        p = self._path(instinct.project)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(dataclasses.asdict(instinct)) + "\n")
+
+    def load(self, project: str) -> list[Instinct]:
+        """Load all instincts for a project."""
+        p = self._path(project)
+        if not p.exists():
+            return []
+        result: list[Instinct] = []
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                result.append(Instinct(**json.loads(line)))
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return result

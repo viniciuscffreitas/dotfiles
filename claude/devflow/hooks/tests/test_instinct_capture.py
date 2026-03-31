@@ -64,3 +64,57 @@ def test_instinct_id_is_8_char_string():
     )
     assert isinstance(i.id, str)
     assert len(i.id) == 8
+
+
+# ---------------------------------------------------------------------------
+# InstinctStore — append + load
+# ---------------------------------------------------------------------------
+
+def _make_instinct(project="test-proj", id="ab1234cd", status="pending") -> Instinct:
+    return Instinct(
+        id=id,
+        project=project,
+        captured_at="2026-03-31T00:00:00+00:00",
+        session_id="sess-001",
+        content="Use Riverpod for state.",
+        confidence=0.8,
+        category="pattern",
+        status=status,
+        promoted_to=None,
+    )
+
+
+def test_store_append_creates_file_if_missing(tmp_path):
+    store = InstinctStore(base_dir=tmp_path)
+    i = _make_instinct()
+    store.append(i)
+    p = tmp_path / "test-proj.jsonl"
+    assert p.exists()
+    lines = [l for l in p.read_text().splitlines() if l.strip()]
+    assert len(lines) == 1
+    assert json.loads(lines[0])["id"] == "ab1234cd"
+
+
+def test_store_load_returns_all_instincts_for_project(tmp_path):
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(id="id000001"))
+    store.append(_make_instinct(id="id000002"))
+    store.append(_make_instinct(id="id000003"))
+    result = store.load("test-proj")
+    assert len(result) == 3
+    assert all(isinstance(i, Instinct) for i in result)
+
+
+def test_store_never_raises_on_missing_file(tmp_path):
+    store = InstinctStore(base_dir=tmp_path)
+    result = store.load("no-such-project")
+    assert result == []
+
+
+def test_store_multiple_projects_are_isolated(tmp_path):
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="proj-a", id="aa000001"))
+    store.append(_make_instinct(project="proj-b", id="bb000001"))
+    store.append(_make_instinct(project="proj-b", id="bb000002"))
+    assert len(store.load("proj-a")) == 1
+    assert len(store.load("proj-b")) == 2
