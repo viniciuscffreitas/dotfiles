@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _util import get_state_dir, hook_block
+from _session import is_safe_session
 
 # Specs older than 24 hours are considered abandoned
 SPEC_EXPIRY_SECONDS = 24 * 60 * 60
@@ -64,8 +65,7 @@ def _cleanup_discovery_marker() -> None:
 
 
 def main() -> int:
-    session_id = os.environ.get("CLAUDE_SESSION_ID", "").strip()
-    if not session_id or session_id == "default":
+    if not is_safe_session():
         print("[devflow] no session ID — guard bypassed", file=sys.stderr)
         _cleanup_discovery_marker()
         return 0

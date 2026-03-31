@@ -79,3 +79,102 @@ class TestTelemetryStoreWAL:
 
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             store._write_with_retry(always_locked, max_retries=3)
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Session ID utility (_session.py)
+# ---------------------------------------------------------------------------
+
+class TestGetSessionId:
+
+    def test_returns_claude_session_id_when_set(self, monkeypatch):
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "claude-abc-123")
+        monkeypatch.delenv("DEVFLOW_SESSION_ID", raising=False)
+        import importlib
+        import _session
+        importlib.reload(_session)
+        assert _session.get_session_id() == "claude-abc-123"
+
+    def test_returns_devflow_session_id_when_claude_unset(self, monkeypatch):
+        monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+        monkeypatch.setenv("DEVFLOW_SESSION_ID", "devflow-test-456")
+        import importlib
+        import _session
+        importlib.reload(_session)
+        assert _session.get_session_id() == "devflow-test-456"
+
+    def test_returns_pid_fallback_when_both_unset(self, monkeypatch):
+        monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+        monkeypatch.delenv("DEVFLOW_SESSION_ID", raising=False)
+        import importlib
+        import _session
+        importlib.reload(_session)
+        import os
+        sid = _session.get_session_id()
+        assert sid.startswith(f"pid-{os.getpid()}-")
+
+    def test_fallback_is_unique_across_calls_with_different_timestamps(self, monkeypatch):
+        monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+        monkeypatch.delenv("DEVFLOW_SESSION_ID", raising=False)
+        import importlib
+        import _session
+        importlib.reload(_session)
+        with patch("_session.time") as mock_time:
+            mock_time.time.side_effect = [1000, 1001]
+            sid1 = _session.get_session_id()
+            sid2 = _session.get_session_id()
+        assert sid1 != sid2
+
+    def test_util_re_exports_get_session_id_from_session_module(self):
+        """_util.py must import get_session_id from _session, not define it."""
+        util_path = _HOOKS_DIR / "_util.py"
+        content = util_path.read_text()
+        assert "from _session import get_session_id" in content
+        assert "def get_session_id" not in content
+
+    def test_no_hook_reads_claude_session_id_directly(self):
+        """No hook file should read CLAUDE_SESSION_ID via os.environ.get directly."""
+        for py_file in _HOOKS_DIR.glob("*.py"):
+            if py_file.name in ("_session.py",) or "test_" in py_file.name:
+                continue
+            content = py_file.read_text()
+            assert 'os.environ.get("CLAUDE_SESSION_ID"' not in content, (
+                f"{py_file.name} reads CLAUDE_SESSION_ID directly; use get_session_id()"
+            )
+
+    # --- is_safe_session ---
+
+    def test_is_safe_session_true_when_real_id_set(self, monkeypatch):
+        """Returns True when CLAUDE_SESSION_ID is a real non-default value."""
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "abc-123-real")
+        import importlib, _session
+        importlib.reload(_session)
+        assert _session.is_safe_session() is True
+
+    def test_is_safe_session_false_when_unset(self, monkeypatch):
+        """Returns False when CLAUDE_SESSION_ID is not set."""
+        monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+        import importlib, _session
+        importlib.reload(_session)
+        assert _session.is_safe_session() is False
+
+    def test_is_safe_session_false_when_empty_string(self, monkeypatch):
+        """Returns False when CLAUDE_SESSION_ID is an empty string."""
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "")
+        import importlib, _session
+        importlib.reload(_session)
+        assert _session.is_safe_session() is False
+
+    def test_is_safe_session_false_when_default(self, monkeypatch):
+        """Returns False when CLAUDE_SESSION_ID is the sentinel 'default'."""
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "default")
+        import importlib, _session
+        importlib.reload(_session)
+        assert _session.is_safe_session() is False
+
+    def test_is_safe_session_false_when_whitespace_only(self, monkeypatch):
+        """Returns False when CLAUDE_SESSION_ID is whitespace only."""
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "   ")
+        import importlib, _session
+        importlib.reload(_session)
+        assert _session.is_safe_session() is False
