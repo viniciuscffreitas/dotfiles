@@ -183,3 +183,54 @@ def test_file_size_passes_for_small_file(tmp_path):
     result = engine.run("file_size", diff, tmp_path)
     assert result.passed is True
     assert result.violations == []
+
+
+# ---------------------------------------------------------------------------
+# coverage_gate
+# ---------------------------------------------------------------------------
+
+def test_coverage_gate_fails_when_no_test_file(tmp_path):
+    src = tmp_path / "lib" / "features" / "auth" / "login_page.dart"
+    src.parent.mkdir(parents=True)
+    src.write_text("// dart source\n")
+    diff = _make_diff_for_file("lib/features/auth/login_page.dart")
+    engine = LinterEngine()
+    result = engine.run("coverage_gate", diff, tmp_path)
+    assert result.passed is False
+    assert any("login_page" in v for v in result.violations)
+
+
+def test_coverage_gate_passes_when_test_file_exists(tmp_path):
+    src = tmp_path / "lib" / "features" / "auth" / "login_page.dart"
+    src.parent.mkdir(parents=True)
+    src.write_text("// dart source\n")
+    test_dir = tmp_path / "test" / "features" / "auth"
+    test_dir.mkdir(parents=True)
+    (test_dir / "login_page_test.dart").write_text("// test\n")
+    diff = _make_diff_for_file("lib/features/auth/login_page.dart")
+    engine = LinterEngine()
+    result = engine.run("coverage_gate", diff, tmp_path)
+    assert result.passed is True
+    assert result.violations == []
+
+
+def test_coverage_gate_skips_test_files(tmp_path):
+    test_file = tmp_path / "test" / "features" / "auth" / "login_page_test.dart"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("// test\n")
+    diff = _make_diff_for_file("test/features/auth/login_page_test.dart")
+    engine = LinterEngine()
+    result = engine.run("coverage_gate", diff, tmp_path)
+    assert result.passed is True
+    assert result.violations == []
+
+
+def test_coverage_gate_skips_non_feature_files(tmp_path):
+    src = tmp_path / "lib" / "utils" / "helpers.dart"
+    src.parent.mkdir(parents=True)
+    src.write_text("// util\n")
+    diff = _make_diff_for_file("lib/utils/helpers.dart")
+    engine = LinterEngine()
+    result = engine.run("coverage_gate", diff, tmp_path)
+    assert result.passed is True
+    assert result.violations == []

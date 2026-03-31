@@ -12,6 +12,7 @@ from typing import Callable
 _DIFF_FILE_RE = re.compile(r"^diff --git a/(.+) b/(.+)$")
 _DART_IMPORT_RE = re.compile(r"""import\s+['"]package:[^/]+/features/([^/]+)/""")
 _FEATURES_PATH_RE = re.compile(r"lib/features/([^/]+)/")
+_FEATURES_DIR_RE = re.compile(r"^lib/features/[^/]+/")
 
 _WARN_LINES = 400
 _BLOCK_LINES = 600
@@ -148,7 +149,34 @@ def _lint_file_size(diff: str, project_root: Path) -> LinterResult:
 
 
 def _lint_coverage_gate(diff: str, project_root: Path) -> LinterResult:
-    return LinterResult("coverage_gate", True, [], 0, 0.0)
+    t0 = time.monotonic()
+    violations: list[str] = []
+    modified_files: set[str] = set()
+
+    for line in diff.splitlines():
+        m = _DIFF_FILE_RE.match(line)
+        if m:
+            modified_files.add(m.group(2))
+
+    dart_sources = [
+        f for f in modified_files
+        if f.endswith(".dart")
+        and not f.endswith("_test.dart")
+        and _FEATURES_DIR_RE.match(f)
+    ]
+
+    files_checked = len(dart_sources)
+    for rel_path in dart_sources:
+        stem = Path(rel_path).stem
+        pattern = f"test/**/*{stem}*_test.dart"
+        matches = list(project_root.glob(pattern))
+        if not matches:
+            violations.append(
+                f"{rel_path} — no test file found (expected: test/**/*{stem}*_test.dart)"
+            )
+
+    duration_ms = (time.monotonic() - t0) * 1000
+    return LinterResult("coverage_gate", not violations, violations, files_checked, duration_ms)
 
 
 def _lint_compile_check(diff: str, project_root: Path) -> LinterResult:
