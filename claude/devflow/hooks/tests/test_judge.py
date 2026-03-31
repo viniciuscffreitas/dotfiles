@@ -112,3 +112,78 @@ class TestBuildPrompt:
         )
         prompt = self.judge._build_prompt(payload)
         assert "lib/features/user/" in prompt
+
+
+# ---------------------------------------------------------------------------
+# HarnessJudge._parse_result
+# ---------------------------------------------------------------------------
+
+VALID_JUDGE_JSON = {
+    "lob_violation": {"result": "no", "evidence": None},
+    "duplication": {"result": "no", "evidence": None},
+    "type_contract_violation": {"result": "na", "evidence": None},
+    "unjustified_complexity": {"result": "no", "evidence": None},
+    "naming_consistency": {"score": 0.9, "evidence": None},
+    "edge_case_coverage": {"level": "adequate", "missing": []},
+    "spec_fulfilled": {"result": "yes", "evidence": None},
+    "overall_verdict": "pass",
+    "fail_reasons": [],
+}
+
+FAIL_JUDGE_JSON = {
+    "lob_violation": {"result": "yes", "evidence": "imports from auth feature"},
+    "duplication": {"result": "no", "evidence": None},
+    "type_contract_violation": {"result": "no", "evidence": None},
+    "unjustified_complexity": {"result": "no", "evidence": None},
+    "naming_consistency": {"score": 0.8, "evidence": None},
+    "edge_case_coverage": {"level": "thorough", "missing": []},
+    "spec_fulfilled": {"result": "yes", "evidence": None},
+    "overall_verdict": "fail",
+    "fail_reasons": ["lob_violation"],
+}
+
+
+class TestParseResult:
+    def setup_method(self):
+        self.judge = HarnessJudge()
+
+    def test_parses_valid_json(self):
+        raw = json.dumps(VALID_JUDGE_JSON)
+        result = self.judge._parse_result(raw, task_id="t1")
+        assert result.verdict == "pass"
+        assert result.lob_violation is False
+        assert result.naming_consistency_score == pytest.approx(0.9)
+        assert result.edge_case_coverage == "adequate"
+        assert result.spec_fulfilled == "yes"
+
+    def test_strips_json_fences(self):
+        raw = "```json\n" + json.dumps(VALID_JUDGE_JSON) + "\n```"
+        result = self.judge._parse_result(raw, task_id="t2")
+        assert result.verdict == "pass"
+
+    def test_strips_json_fence_no_language(self):
+        raw = "```\n" + json.dumps(VALID_JUDGE_JSON) + "\n```"
+        result = self.judge._parse_result(raw, task_id="t3")
+        assert result.verdict == "pass"
+
+    def test_invalid_json_returns_skipped(self):
+        result = self.judge._parse_result("not json at all", task_id="t4")
+        assert result.verdict == "skipped"
+        assert result.task_id == "t4"
+
+    def test_empty_string_returns_skipped(self):
+        result = self.judge._parse_result("", task_id="t5")
+        assert result.verdict == "skipped"
+
+    def test_parses_fail_verdict(self):
+        raw = json.dumps(FAIL_JUDGE_JSON)
+        result = self.judge._parse_result(raw, task_id="t6")
+        assert result.verdict == "fail"
+        assert result.lob_violation is True
+        assert result.lob_evidence == "imports from auth feature"
+        assert "lob_violation" in result.fail_reasons
+
+    def test_raw_response_preserved(self):
+        raw = json.dumps(VALID_JUDGE_JSON)
+        result = self.judge._parse_result(raw, task_id="t7")
+        assert result.raw_response == raw

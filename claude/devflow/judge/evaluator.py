@@ -87,7 +87,53 @@ class HarnessJudge:
         )
 
     def _parse_result(self, raw: str, task_id: str = "") -> "JudgeResult":
-        pass  # Task 3
+        def _skipped(r: str | None = None) -> JudgeResult:
+            return JudgeResult(
+                task_id=task_id, verdict="skipped",
+                lob_violation=False, lob_evidence=None,
+                duplication=False, duplication_evidence=None,
+                type_contract_violation=False, type_contract_evidence=None,
+                unjustified_complexity=False, complexity_evidence=None,
+                naming_consistency_score=1.0, naming_evidence=None,
+                edge_case_coverage="adequate",
+                spec_fulfilled="yes", spec_evidence=None,
+                fail_reasons=[], raw_response=r or None,
+            )
+
+        try:
+            cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+            data = json.loads(cleaned)
+
+            lob = data.get("lob_violation", {})
+            dup = data.get("duplication", {})
+            tc = data.get("type_contract_violation", {})
+            uc = data.get("unjustified_complexity", {})
+            nc = data.get("naming_consistency", {})
+            ec = data.get("edge_case_coverage", {})
+            sf = data.get("spec_fulfilled", {})
+
+            return JudgeResult(
+                task_id=task_id,
+                verdict=str(data.get("overall_verdict", "skipped")),
+                lob_violation=lob.get("result") == "yes",
+                lob_evidence=lob.get("evidence"),
+                duplication=dup.get("result") == "yes",
+                duplication_evidence=dup.get("evidence"),
+                type_contract_violation=tc.get("result") == "yes",
+                type_contract_evidence=tc.get("evidence"),
+                unjustified_complexity=uc.get("result") == "yes",
+                complexity_evidence=uc.get("evidence"),
+                naming_consistency_score=float(nc.get("score", 1.0)),
+                naming_evidence=nc.get("evidence"),
+                edge_case_coverage=str(ec.get("level", "adequate")),
+                spec_fulfilled=str(sf.get("result", "yes")),
+                spec_evidence=sf.get("evidence"),
+                fail_reasons=list(data.get("fail_reasons", [])),
+                raw_response=raw,
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return _skipped(raw)
 
     def evaluate(self, payload: JudgePayload) -> "JudgeResult":
         pass  # Task 4
