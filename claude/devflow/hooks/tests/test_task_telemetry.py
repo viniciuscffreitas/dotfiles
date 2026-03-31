@@ -355,6 +355,56 @@ def test_main_no_spec_phases_writes_nothing(tmp_path):
     assert not telemetry_log.exists(), "must not write to log when no spec phases detected"
 
 
+# ---------------------------------------------------------------------------
+# main() — debug stderr output (contract: CHANGES item 4)
+# ---------------------------------------------------------------------------
+
+def test_main_debug_logs_default_session_id(capsys):
+    """main() emits stderr diagnostic when session_id resolves to 'default'."""
+    with (
+        patch("task_telemetry.read_hook_stdin", return_value={}),
+        patch("task_telemetry.get_session_id", return_value="default"),
+    ):
+        rc = main()
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert err.strip(), "expected stderr diagnostic when session_id is default"
+
+
+def test_main_debug_logs_missing_jsonl(tmp_path, capsys):
+    """main() emits stderr diagnostic when the session JSONL cannot be found."""
+    session_id = "no-jsonl-abc123"
+    cwd = "/Users/vini/Developer/agents"
+    with (
+        patch("task_telemetry.read_hook_stdin", return_value={}),
+        patch("task_telemetry.get_session_id", return_value=session_id),
+        patch("os.getcwd", return_value=cwd),
+        patch("task_telemetry.PROJECTS_DIR", tmp_path / "projects"),
+    ):
+        rc = main()
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert err.strip(), "expected stderr diagnostic when JSONL not found"
+
+
+def test_main_debug_logs_no_phases(tmp_path, capsys):
+    """main() emits stderr diagnostic when JSONL exists but contains no spec phases."""
+    session_id = "no-phases-xyz456"
+    cwd = "/Users/vini/Developer/agents"
+    _make_jsonl_with_tokens(tmp_path, session_id, cwd)
+    with (
+        patch("task_telemetry.read_hook_stdin", return_value={}),
+        patch("task_telemetry.get_session_id", return_value=session_id),
+        patch("os.getcwd", return_value=cwd),
+        patch("task_telemetry.PROJECTS_DIR", tmp_path / "projects"),
+        patch("task_telemetry.TELEMETRY_DIR", tmp_path),
+    ):
+        rc = main()
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert err.strip(), "expected stderr diagnostic when no spec phases detected"
+
+
 def test_main_with_spec_phases_writes_record(tmp_path):
     """Session with spec phases writes exactly one record to telemetry log."""
     session_id = "test-session-xyz"

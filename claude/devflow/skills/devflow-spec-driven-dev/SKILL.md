@@ -100,6 +100,28 @@ COMMIT:  atomic commit per behavior
 
 If any fails: fix before declaring done.
 
+## State Management (mandatory — enables telemetry and stop guard)
+
+At each phase transition, write `~/.claude/devflow/state/$CLAUDE_SESSION_ID/active-spec.json`.
+If `$CLAUDE_SESSION_ID` is unset, use `~/.claude/devflow/state/default/active-spec.json`.
+
+**On PLAN start** (before presenting the plan to user):
+```json
+{"status": "PENDING", "plan_path": "<task description or docs/plans/ path>", "started_at": <unix_timestamp>}
+```
+
+**After user APPROVES** (before writing any code):
+```json
+{"status": "IMPLEMENTING", "plan_path": "<same as above>", "started_at": <same unix_timestamp>}
+```
+
+**After VERIFY passes** (all tests green, lint clean):
+```json
+{"status": "COMPLETED", "plan_path": "<same as above>", "started_at": <same unix_timestamp>}
+```
+
+Use the Write tool to write this file. This is what feeds `task_telemetry` (token cost per phase) and `spec_stop_guard` (blocks accidental session exit mid-spec).
+
 ## Rules
 
 - NEVER declare done without full verification

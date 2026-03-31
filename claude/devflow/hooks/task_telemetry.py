@@ -129,10 +129,13 @@ def main() -> int:
     cwd = hook_data.get("cwd") or os.getcwd()
 
     if not session_id or session_id == "default":
+        print("[devflow:telemetry] skip: no session_id (hook not invoked by Claude Code)", file=sys.stderr)
         return 0
 
     jsonl_path = _find_session_jsonl(session_id, cwd)
     if not jsonl_path:
+        slug = _cwd_to_slug(cwd)
+        print(f"[devflow:telemetry] skip: JSONL not found — {PROJECTS_DIR / slug / f'{session_id}.jsonl'}", file=sys.stderr)
         return 0
 
     try:
@@ -141,6 +144,8 @@ def main() -> int:
         return 0
 
     if not result["phases"]:
+        print(f"[devflow:telemetry] skip: no active-spec.json writes in {jsonl_path.name}", file=sys.stderr)
+        print("[devflow:telemetry] hint: skill must write active-spec.json at PENDING/IMPLEMENTING/COMPLETED", file=sys.stderr)
         return 0
 
     record = {
