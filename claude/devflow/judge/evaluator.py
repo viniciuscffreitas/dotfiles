@@ -44,4 +44,50 @@ class JudgeResult:
 
 
 class HarnessJudge:
-    pass  # implementation follows in Tasks 2-4
+
+    _SYSTEM = (
+        "You are a code quality evaluator. Evaluate ONLY the final state of the diff. "
+        "Do not consider intermediate steps. "
+        "Respond ONLY with valid JSON matching the schema. "
+        "No prose. No markdown. No explanation outside the JSON."
+    )
+
+    _RUBRIC_SCHEMA = """{
+  "lob_violation": {"result": "yes|no", "evidence": "specific import or null"},
+  "duplication": {"result": "yes|no", "evidence": "duplicated snippet + existing path or null"},
+  "type_contract_violation": {"result": "yes|no|na", "evidence": "line and description or null"},
+  "unjustified_complexity": {"result": "yes|no", "evidence": "abstraction description or null"},
+  "naming_consistency": {"score": 0.0, "evidence": "inconsistencies or null"},
+  "edge_case_coverage": {"level": "none|minimal|adequate|thorough", "missing": []},
+  "spec_fulfilled": {"result": "yes|partial|no", "evidence": "what is missing or null"},
+  "overall_verdict": "pass|warn|fail",
+  "fail_reasons": []
+}"""
+
+    _VERDICT_RULES = """Verdict rules:
+- fail: lob_violation=yes OR type_contract_violation=yes OR unjustified_complexity=yes OR spec_fulfilled=no
+- warn: duplication=yes OR naming_consistency.score < 0.7 OR edge_case_coverage in [none, minimal] OR spec_fulfilled=partial
+- pass: none of the above"""
+
+    def __init__(self, model: str = "claude-haiku-4-5-20251001") -> None:
+        self.model = model
+
+    def _build_prompt(self, payload: JudgePayload) -> str:
+        rules_block = "\n".join(f"- {r}" for r in payload.harness_rules) or "(none)"
+        return (
+            f"{self._SYSTEM}\n\n"
+            f"## Task Spec\n{payload.spec}\n\n"
+            f"## Expected LoB Boundary\n{payload.feature_path}\n\n"
+            f"## Harness Rules\n{rules_block}\n\n"
+            f"## Existing Code (context)\n{payload.existing_code}\n\n"
+            f"## Diff to Evaluate\n{payload.diff}\n\n"
+            f"## Output Schema\n{self._RUBRIC_SCHEMA}\n\n"
+            f"{self._VERDICT_RULES}\n\n"
+            f"Respond ONLY with valid JSON."
+        )
+
+    def _parse_result(self, raw: str, task_id: str = "") -> "JudgeResult":
+        pass  # Task 3
+
+    def evaluate(self, payload: JudgePayload) -> "JudgeResult":
+        pass  # Task 4

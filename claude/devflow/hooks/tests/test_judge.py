@@ -55,3 +55,60 @@ class TestDataClasses:
         assert r.verdict == "pass"
         assert r.lob_violation is False
         assert r.fail_reasons == []
+
+
+# ---------------------------------------------------------------------------
+# HarnessJudge._build_prompt
+# ---------------------------------------------------------------------------
+
+class TestBuildPrompt:
+    def setup_method(self):
+        self.judge = HarnessJudge()
+
+    def test_prompt_includes_diff(self):
+        payload = JudgePayload(
+            diff="diff --git a/foo.py\n+def bar(): pass",
+            spec="add bar function",
+            harness_rules=["no mocks"],
+            existing_code="def foo(): pass",
+            feature_path="lib/",
+            task_id="t1",
+        )
+        prompt = self.judge._build_prompt(payload)
+        assert "diff --git a/foo.py" in prompt
+
+    def test_prompt_includes_spec(self):
+        payload = JudgePayload(
+            diff="some diff",
+            spec="implement feature ZETA",
+            harness_rules=[],
+            existing_code="",
+            feature_path=".",
+            task_id="t2",
+        )
+        prompt = self.judge._build_prompt(payload)
+        assert "implement feature ZETA" in prompt
+
+    def test_prompt_includes_harness_rules(self):
+        payload = JudgePayload(
+            diff="d", spec="s", harness_rules=["rule one", "rule two"],
+            existing_code="", feature_path=".", task_id="t3",
+        )
+        prompt = self.judge._build_prompt(payload)
+        assert "rule one" in prompt
+        assert "rule two" in prompt
+
+    def test_prompt_system_instruction_no_prose(self):
+        payload = JudgePayload(
+            diff="d", spec="s", harness_rules=[], existing_code="", feature_path=".", task_id="t4",
+        )
+        prompt = self.judge._build_prompt(payload)
+        assert "Respond ONLY with valid JSON" in prompt
+
+    def test_prompt_includes_feature_path(self):
+        payload = JudgePayload(
+            diff="d", spec="s", harness_rules=[], existing_code="",
+            feature_path="lib/features/user/", task_id="t5",
+        )
+        prompt = self.judge._build_prompt(payload)
+        assert "lib/features/user/" in prompt
