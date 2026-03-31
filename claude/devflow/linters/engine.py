@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+_DIFF_FILE_RE = re.compile(r"^diff --git a/(.+) b/(.+)$")
+_DART_IMPORT_RE = re.compile(r"""import\s+['"]package:[^/]+/features/([^/]+)/""")
+_FEATURES_PATH_RE = re.compile(r"lib/features/([^/]+)/")
+
 
 @dataclass
 class LinterResult:
@@ -58,7 +62,42 @@ class LinterEngine:
 # ---------------------------------------------------------------------------
 
 def _lint_import_boundary(diff: str, project_root: Path) -> LinterResult:
-    return LinterResult("import_boundary", True, [], 0, 0.0)
+    t0 = time.monotonic()
+    violations: list[str] = []
+    files_checked = 0
+    current_file: str | None = None
+    line_num = 0
+
+    for raw_line in diff.splitlines():
+        m = _DIFF_FILE_RE.match(raw_line)
+        if m:
+            current_file = m.group(2)
+            line_num = 0
+            continue
+
+        if raw_line.startswith("@@"):
+            hm = re.search(r"\+(\d+)", raw_line)
+            line_num = int(hm.group(1)) - 1 if hm else 0
+            continue
+
+        if raw_line.startswith("+") and not raw_line.startswith("+++"):
+            line_num += 1
+            if current_file and current_file.endswith(".dart"):
+                files_checked += 1
+                src_m = _FEATURES_PATH_RE.search(current_file)
+                imp_m = _DART_IMPORT_RE.search(raw_line[1:])
+                if src_m and imp_m:
+                    source_feat = src_m.group(1)
+                    target_feat = imp_m.group(1)
+                    if source_feat != target_feat:
+                        violations.append(
+                            f"{current_file}:{line_num} — cross-feature import: {source_feat} → {target_feat}"
+                        )
+        elif not raw_line.startswith("-"):
+            line_num += 1
+
+    duration_ms = (time.monotonic() - t0) * 1000
+    return LinterResult("import_boundary", not violations, violations, files_checked, duration_ms)
 
 
 def _lint_file_size(diff: str, project_root: Path) -> LinterResult:

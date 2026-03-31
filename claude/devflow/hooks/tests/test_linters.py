@@ -83,3 +83,62 @@ def test_engine_run_returns_correct_result_for_known_linter(tmp_path):
     result = engine.run("compile_check", "", tmp_path)
     assert result.linter_name == "compile_check"
     assert isinstance(result.passed, bool)
+
+
+# ---------------------------------------------------------------------------
+# import_boundary
+# ---------------------------------------------------------------------------
+
+_DART_CROSS_FEATURE_DIFF = """\
+diff --git a/lib/features/auth/login_page.dart b/lib/features/auth/login_page.dart
+--- a/lib/features/auth/login_page.dart
++++ b/lib/features/auth/login_page.dart
+@@ -1,3 +1,4 @@
++import 'package:myapp/features/home/home_controller.dart';
+ import 'package:myapp/features/auth/auth_service.dart';
+"""
+
+_DART_SAME_FEATURE_DIFF = """\
+diff --git a/lib/features/auth/login_page.dart b/lib/features/auth/login_page.dart
+--- a/lib/features/auth/login_page.dart
++++ b/lib/features/auth/login_page.dart
+@@ -1,3 +1,4 @@
++import 'package:myapp/features/auth/auth_service.dart';
+"""
+
+_NON_DART_DIFF = """\
+diff --git a/lib/features/auth/service.py b/lib/features/auth/service.py
+--- a/lib/features/auth/service.py
++++ b/lib/features/auth/service.py
+@@ -1,3 +1,4 @@
++from features.home import controller
+"""
+
+
+def test_import_boundary_detects_cross_feature(tmp_path):
+    engine = LinterEngine()
+    result = engine.run("import_boundary", _DART_CROSS_FEATURE_DIFF, tmp_path)
+    assert result.passed is False
+    assert len(result.violations) == 1
+    assert "auth" in result.violations[0]
+    assert "home" in result.violations[0]
+
+
+def test_import_boundary_allows_same_feature(tmp_path):
+    engine = LinterEngine()
+    result = engine.run("import_boundary", _DART_SAME_FEATURE_DIFF, tmp_path)
+    assert result.passed is True
+    assert result.violations == []
+
+
+def test_import_boundary_ignores_non_dart_files(tmp_path):
+    engine = LinterEngine()
+    result = engine.run("import_boundary", _NON_DART_DIFF, tmp_path)
+    assert result.passed is True
+
+
+def test_import_boundary_passes_on_empty_diff(tmp_path):
+    engine = LinterEngine()
+    result = engine.run("import_boundary", "", tmp_path)
+    assert result.passed is True
+    assert result.files_checked == 0
