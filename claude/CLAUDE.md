@@ -64,6 +64,9 @@ Any delete, reset, migration, or irreversible overwrite:
 - For parallel sessions: set `"learned_skills_auto_inject": false` in `devflow-config.json` or project `.devflow-config.json`
 - Skills loaded at session start survive symlink removal — the real risk is only during concurrent compaction
 
+### Context Discipline
+Before exploring any codebase, explicitly declare which files are relevant to the task. Use Grep before Read. Never read entire directories to orient yourself.
+
 ### Subagents
 - Subagents DO NOT spawn other subagents
 - All delegation flows through the Main Agent
