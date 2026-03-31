@@ -12,12 +12,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from telemetry.store import TelemetryStore
-from analysis.harness_health import (
-    HarnessHealthChecker,
-    HarnessHealthReport,
-    HookHealth,
-    SkillHealth,
-)
+try:
+    from analysis.harness_health import (
+        HarnessHealthChecker,
+        HarnessHealthReport,
+        HookHealth,
+        SkillHealth,
+    )
+    _harness_health_available = True
+except ModuleNotFoundError:
+    _harness_health_available = False
 
 
 # ---------------------------------------------------------------------------
@@ -53,10 +57,21 @@ def test_get_hook_stats_unknown_hook_returns_zeroes(tmp_path):
     assert result["last_triggered_at"] is None
 
 
-def test_get_hook_stats_never_raises(tmp_path):
+def test_get_hook_stats_unknown_hook_is_structurally_correct(tmp_path):
     store = TelemetryStore(db_path=tmp_path / "test.db")
-    result = store.get_hook_stats("")
-    assert isinstance(result, dict)
-    assert "error_rate" in result
-    assert "last_triggered_at" in result
-    assert "avg_execution_ms" in result
+    result = store.get_hook_stats("completely-unknown-hook-xyz")
+    assert result == {"avg_execution_ms": None, "error_rate": 0.0, "last_triggered_at": None}
+
+
+def test_get_hook_stats_computes_error_rate_from_records(tmp_path):
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    ts = datetime.now(tz=timezone.utc).isoformat()
+    # 3 sessions where "my_hook" is in rules_triggered, 1 failing
+    store.record({"task_id": "h1", "rules_triggered": "my_hook", "judge_verdict": "pass", "timestamp": ts})
+    store.record({"task_id": "h2", "rules_triggered": "my_hook", "judge_verdict": "fail", "timestamp": ts})
+    store.record({"task_id": "h3", "rules_triggered": "my_hook", "judge_verdict": "pass", "timestamp": ts})
+    store.record({"task_id": "h4", "rules_triggered": "other_hook", "judge_verdict": "fail"})
+    result = store.get_hook_stats("my_hook")
+    assert abs(result["error_rate"] - 1 / 3) < 0.01
+    assert result["last_triggered_at"] == ts
+    assert result["avg_execution_ms"] is None
