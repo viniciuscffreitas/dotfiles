@@ -91,11 +91,21 @@ class TelemetryStore:
                 conn.commit()
 
     def record(self, payload: dict) -> None:
-        """Upsert a task record. Missing columns default to None."""
+        """Upsert a task record. Missing columns default to None for new rows;
+        existing non-null values are preserved for updates."""
         values = {col: payload.get(col) for col in _COLUMNS}
-        placeholders = ", ".join(f":{col}" for col in _COLUMNS)
         cols = ", ".join(_COLUMNS)
-        sql = f"INSERT OR REPLACE INTO task_executions ({cols}) VALUES ({placeholders})"
+        placeholders = ", ".join(f":{col}" for col in _COLUMNS)
+        # On conflict: preserve existing non-null value via COALESCE
+        update_clauses = ", ".join(
+            f"{col} = COALESCE(excluded.{col}, task_executions.{col})"
+            for col in _COLUMNS
+            if col != "task_id"
+        )
+        sql = (
+            f"INSERT INTO task_executions ({cols}) VALUES ({placeholders}) "
+            f"ON CONFLICT(task_id) DO UPDATE SET {update_clauses}"
+        )
         with self._lock:
             with self._connect() as conn:
                 conn.execute(sql, values)

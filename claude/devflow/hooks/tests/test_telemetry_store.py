@@ -71,11 +71,13 @@ def test_record_inserts_new_task(tmp_path):
 def test_record_upserts_existing_task_id(tmp_path):
     db = tmp_path / "test.db"
     store = TelemetryStore(db_path=db)
-    store.record({"task_id": "abc123", "task_category": "simple"})
-    store.record({"task_id": "abc123", "task_category": "complex"})  # overwrite
+    store.record({"task_id": "abc123", "task_category": "simple", "context_tokens_consumed": 5000})
+    store.record({"task_id": "abc123", "judge_verdict": "pass"})  # partial update
     rows = store.get_recent(10)
     assert len(rows) == 1, "upsert must not create a duplicate"
-    assert rows[0]["task_category"] == "complex"
+    assert rows[0]["judge_verdict"] == "pass"       # new field set
+    assert rows[0]["task_category"] == "simple"     # existing field preserved
+    assert rows[0]["context_tokens_consumed"] == 5000  # existing field preserved
 
 
 def test_record_handles_missing_optional_fields(tmp_path):
