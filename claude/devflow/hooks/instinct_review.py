@@ -167,10 +167,13 @@ def main(argv: list[str] | None = None) -> int:
             if instinct.confidence >= args.promote_threshold:
                 _write_to_rules(store, instinct, project, rules_path)
                 promoted += 1
-        print(f"  [devflow:instincts] Promoted {promoted} instincts to {rules_path}")
+        print(f"[devflow:instincts] promoted {promoted} instincts → {rules_path}")
         return 0
 
     if args.interactive:
+        if not sys.stdin.isatty():
+            print("Warning: no TTY detected — run in a terminal for interactive mode")
+            return 0
         for p in projects:
             report = store.report(p)
             _print_report_header(report)

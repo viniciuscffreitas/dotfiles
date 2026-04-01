@@ -10,6 +10,8 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Optional
 
+from _session import get_session_id  # noqa: F401 — re-exported for hook imports
+
 # Default file length thresholds — overridable via devflow-config.json
 FILE_LINES_WARN = 400
 FILE_LINES_CRITICAL = 600
@@ -116,10 +118,6 @@ def get_bash_command(hook_data: dict) -> Optional[str]:
     if cmd and cmd.strip():
         return cmd
     return None
-
-
-def get_session_id() -> str:
-    return os.environ.get("CLAUDE_SESSION_ID", "default")
 
 
 def get_state_dir() -> Path:

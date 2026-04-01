@@ -46,7 +46,8 @@ def test_schema_has_required_columns(tmp_path):
         "probability_score", "impact_score", "detectability_score", "oversight_level",
         "skills_loaded", "rules_triggered", "harness_drift_detected", "task_time_seconds",
         "firewall_delegated", "firewall_task_id", "firewall_success", "firewall_duration_ms",
-        "instincts_captured_count",
+        "instincts_captured_count", "cost_usd",
+        "session_id", "context_anxiety_score",
     }
     assert required == cols
 

@@ -7,7 +7,7 @@
 *Automatic quality hooks, TDD enforcement, spec-driven workflows, risk-aware execution, and self-evaluating telemetry — for every project, without configuration.*
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-586-brightgreen.svg)](#running-tests)
+[![Tests](https://img.shields.io/badge/tests-746-brightgreen.svg)](#running-tests)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-orange.svg)](https://claude.ai/code)
 
@@ -152,10 +152,13 @@ These fire on every relevant Claude Code event. You never invoke them — they j
 |------|-------|-------------|
 | **pre_task_profiler** | PreToolUse | Scores every task on three axes: `probability` (how likely something breaks), `impact` (blast radius), `detectability` (how easy to catch). Determines oversight level: `vibe → standard → strict → human_review`. Writes `risk-profile.json`, feeds TelemetryStore |
 | **post_task_judge** | Stop | Reads the risk profile, builds a structured payload (diff + spec + harness rules + context), calls `claude-haiku` as evaluator. Routes verdict: `PASS → exit 0`, `WARN → advisory`, `FAIL + strict → block`. Never raises — timeout and parse errors degrade to `SKIPPED` |
-| **task_telemetry** | Stop | Scans the session JSONL and records token cost per phase into a SQLite store (31-column schema). Infers phase transitions passively — no LLM writes required |
+| **task_telemetry** | Stop | Scans the session JSONL and records token cost per phase into a SQLite store (39-column schema). Infers phase transitions passively — no LLM writes required |
 | **anxiety_report** | CLI | Scores sessions by over-investigation: `depth` (reads before first write) × `ratio` (understand/build token ratio). Classifies LOW/MEDIUM/HIGH. Use `python3 hooks/anxiety_report.py` |
 | **health_report** | CLI | Scans every skill and hook against usage data. Flags stale, unused, broken, or slow components. Use `python3 hooks/health_report.py --critical` to gate on health |
 | **weekly_intelligence** | CLI | 8-rule recommendation engine over the last N sessions. Closes the flywheel: what's working, what's slowing you down, what to build next. Use `python3 hooks/weekly_intelligence.py` |
+| **instinct_capture** | Stop | Auto-captures qualitative knowledge from sessions as reusable skills. Writes to `~/.claude/skills/devflow-learned-*/` and injects in future sessions |
+| **secrets_gate** | PreToolUse (Write\|Edit) | Scans content for credentials, API keys, and tokens before writing to disk. Blocks if secrets detected |
+| **cost_tracker** | Stop | Records USD cost per session from JSONL usage metadata. Feeds TelemetryStore |
 
 ---
 
@@ -174,7 +177,7 @@ Every `/spec` cycle passes through two phases:
 | `IMPLEMENTING` | First `Write`/`Edit` to a source file after PENDING |
 | `COMPLETED` | Last successful test-runner result after IMPLEMENTING |
 
-All data lands in a SQLite store (`~/.claude/devflow/telemetry/devflow.db`) with 31 columns including risk scores, judge verdicts, anxiety scores, skills loaded, and hook execution data — alongside the legacy `sessions.jsonl` for backwards compatibility.
+All data lands in a SQLite store (`~/.claude/devflow/telemetry/devflow.db`) with 39 columns including risk scores, judge verdicts, anxiety scores, skills loaded, and hook execution data — alongside the legacy `sessions.jsonl` for backwards compatibility.
 
 ```bash
 python3 ~/.claude/devflow/telemetry/cli.py stats
@@ -359,7 +362,7 @@ cp ~/.claude/devflow/CLAUDE.md ~/.claude/CLAUDE.md
 
 ```bash
 cd ~/.claude/devflow && python3.13 -m pytest hooks/tests/ -q
-# 586 tests should pass
+# 746 tests should pass
 ```
 
 ### Uninstall
@@ -404,10 +407,14 @@ chmod +x ~/.claude/devflow/uninstall.sh && ~/.claude/devflow/uninstall.sh
     │   ├── anxiety_report.py          ← CLI: over-investigation detector
     │   ├── health_report.py           ← CLI: harness health monitor
     │   ├── weekly_intelligence.py     ← CLI: weekly recommendations
+    │   ├── instinct_capture.py        ← auto-captures qualitative knowledge as skills
+    │   ├── instinct_review.py         ← CLI: review and promote captured instincts
+    │   ├── secrets_gate.py            ← blocks credentials before disk write
+    │   ├── cost_tracker.py            ← USD cost per session → TelemetryStore
     │   ├── telemetry_report.py        ← CLI: token cost per phase per project
-    │   └── tests/                     ← 586 tests
+    │   └── tests/                     ← 746 tests
     ├── telemetry/
-    │   ├── store.py                   ← TelemetryStore: SQLite, 31 columns
+    │   ├── store.py                   ← TelemetryStore: SQLite, 39 columns
     │   ├── migrate_sessions.py        ← one-time migration from sessions.jsonl
     │   ├── cli.py                     ← stats / recent / anxiety commands
     │   └── devflow.db                 ← persistent telemetry (gitignored)
@@ -424,7 +431,8 @@ chmod +x ~/.claude/devflow/uninstall.sh && ~/.claude/devflow/uninstall.sh
     ├── linters/
     │   └── engine.py                  ← LinterEngine: import_boundary, file_size, coverage_gate, compile_check
     ├── agents/
-    │   └── firewall.py                ← ContextFirewall: subprocess isolation
+    │   ├── firewall.py                ← ContextFirewall: subprocess isolation
+    │   └── task_registry.py           ← file-locked TaskRegistry, WAL SQLite for parallel sessions
     ├── skills/                        ← devflow skill files
     ├── commands/                      ← devflow command files
     ├── docs/
@@ -476,12 +484,24 @@ Remove or comment out the hook entry in `~/.claude/settings.json`. Every hook is
 
 ---
 
+## Weekly workflow
+
+Every Friday, run:
+
+```bash
+python3.13 hooks/weekly_intelligence.py   # what happened this week
+python3.13 hooks/instinct_review.py       # review captured knowledge
+python3.13 hooks/health_report.py         # is the harness healthy?
+```
+
+---
+
 ## Running tests
 
 ```bash
 cd ~/.claude/devflow
 
-# All 586 tests
+# All 746 tests
 python3.13 -m pytest hooks/tests/ -q
 
 # Specific module

@@ -1,4 +1,8 @@
-hooks/__pycache__/
-hooks/tests/__pycache__/
+**/__pycache__/
 state/
 .pytest_cache/
+.coverage
+telemetry/devflow.db
+telemetry/secrets_blocked.log
+telemetry/sessions.jsonl
+instincts/

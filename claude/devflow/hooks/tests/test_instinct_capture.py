@@ -709,11 +709,35 @@ def test_review_interactive_flag_calls_input(tmp_path):
     with (
         patch("instinct_review.InstinctStore", return_value=store),
         patch("builtins.input", side_effect=lambda *a: called.append(a) or "s"),
+        patch("sys.stdin") as mock_stdin,
     ):
+        mock_stdin.isatty.return_value = True
         code = review_main(["--project", "test-proj", "--interactive"])
 
     assert code == 0
     assert len(called) >= 1
+
+
+def test_review_interactive_no_tty_prints_warning_and_skips(tmp_path, capsys):
+    """When --interactive is passed but stdin is not a TTY, prints warning and skips prompts."""
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="test-proj", id="ab1234cd", status="pending"))
+
+    called: list = []
+    with (
+        patch("instinct_review.InstinctStore", return_value=store),
+        patch("builtins.input", side_effect=lambda *a: called.append(a) or ""),
+        patch("sys.stdin") as mock_stdin,
+    ):
+        mock_stdin.isatty.return_value = False
+        code = review_main(["--project", "test-proj", "--interactive"])
+
+    assert code == 0
+    assert called == []
+    out = capsys.readouterr().out
+    assert "Warning" in out
+    assert "TTY" in out
 
 
 def test_review_smart_path_momease():
