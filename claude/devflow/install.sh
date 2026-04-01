@@ -54,6 +54,27 @@ settings_path = Path(sys.argv[2])
 
 # Hook definitions — what devflow needs registered
 DEVFLOW_HOOKS = {
+    "PreToolUse": [
+        {
+            "matcher": ".*",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_task_profiler.py"},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_task_firewall.py"},
+            ]
+        },
+        {
+            "matcher": "Write|Edit|MultiEdit",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/secrets_gate.py"},
+            ]
+        },
+        {
+            "matcher": "Bash",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_push_gate.py"},
+            ]
+        },
+    ],
     "PostToolUse": [
         {
             "matcher": "Write|Edit|MultiEdit",
@@ -63,17 +84,30 @@ DEVFLOW_HOOKS = {
             ]
         },
         {
-            "matcher": "Read|Write|Edit|MultiEdit|Bash|Glob|Grep",
+            "matcher": ".*",
             "hooks": [
                 {"type": "command", "command": f"python3 {devflow_dir}/hooks/context_monitor.py"},
             ]
         },
     ],
-    "PreCompact": [
+    "UserPromptSubmit": [
         {
             "matcher": "",
             "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_compact.py"},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/spec_phase_tracker.py"},
+            ]
+        },
+    ],
+    "Stop": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/spec_stop_guard.py", "async": False},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/post_task_judge.py", "async": False},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/task_telemetry.py", "async": False},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/desktop_notify.py", "async": True, "timeout": 5},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/instinct_capture.py", "async": True, "timeout": 30},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/cost_tracker.py", "async": True, "timeout": 10},
             ]
         },
     ],
@@ -91,28 +125,11 @@ DEVFLOW_HOOKS = {
             ]
         },
     ],
-    "UserPromptSubmit": [
+    "PreCompact": [
         {
             "matcher": "",
             "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/spec_phase_tracker.py"},
-            ]
-        },
-    ],
-    "Stop": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/spec_stop_guard.py"},
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/task_telemetry.py"},
-            ]
-        },
-    ],
-    "PreToolUse": [
-        {
-            "matcher": "Bash",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_push_gate.py"},
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_compact.py"},
             ]
         },
     ],

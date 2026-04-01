@@ -156,7 +156,7 @@ These fire on every relevant Claude Code event. You never invoke them — they j
 | **anxiety_report** | CLI | Scores sessions by over-investigation: `depth` (reads before first write) × `ratio` (understand/build token ratio). Classifies LOW/MEDIUM/HIGH. Use `python3 hooks/anxiety_report.py` |
 | **health_report** | CLI | Scans every skill and hook against usage data. Flags stale, unused, broken, or slow components. Use `python3 hooks/health_report.py --critical` to gate on health |
 | **weekly_intelligence** | CLI | 8-rule recommendation engine over the last N sessions. Closes the flywheel: what's working, what's slowing you down, what to build next. Use `python3 hooks/weekly_intelligence.py` |
-| **instinct_capture** | Stop | Auto-captures qualitative knowledge from sessions as reusable skills. Writes to `~/.claude/skills/devflow-learned-*/` and injects in future sessions |
+| **instinct_capture** | Stop | Auto-captures qualitative knowledge from sessions as JSONL per project. Writes to `~/.claude/devflow/instincts/{project}.jsonl`. Review and promote with: `python3.13 hooks/instinct_review.py` |
 | **secrets_gate** | PreToolUse (Write\|Edit) | Scans content for credentials, API keys, and tokens before writing to disk. Blocks if secrets detected |
 | **cost_tracker** | Stop | Records USD cost per session from JSONL usage metadata. Feeds TelemetryStore |
 
@@ -340,6 +340,9 @@ pre_push_gate adds language-specific test runners: `pytest --tb=short -q` + opti
 - [Claude Code](https://claude.com/claude-code) CLI installed and authenticated
 - Python 3.10+
 - pytest: `pip3 install pytest`
+- Claude API access: `instinct_capture.py` and `post_task_judge.py` call `claude -p` (Haiku) for LLM evaluation. These hooks exit 0 gracefully if the call fails, but without API access they produce no output.
+- git: required for `pre_push_gate.py` and `parallel_launch.sh`
+- macOS: `desktop_notify.py` uses `osascript` for notifications. On Linux/WSL, the hook silently skips notification and exits 0.
 
 ### Install
 
@@ -493,6 +496,29 @@ python3.13 hooks/weekly_intelligence.py   # what happened this week
 python3.13 hooks/instinct_review.py       # review captured knowledge
 python3.13 hooks/health_report.py         # is the harness healthy?
 ```
+
+---
+
+## Parallel sessions
+
+Run multiple Claude Code sessions simultaneously on the same codebase:
+
+```bash
+# Launch 3 sessions in parallel, each on a different issue
+~/.claude/devflow/scripts/parallel_launch.sh ISSUE-123 ISSUE-124 ISSUE-125
+
+# Dry run — preview without creating worktrees
+~/.claude/devflow/scripts/parallel_launch.sh --dry-run ISSUE-123 ISSUE-124
+
+# Clean up all parallel worktrees when done
+~/.claude/devflow/scripts/parallel_launch.sh --cleanup
+```
+
+Each session gets:
+- Its own git worktree on a dedicated branch
+- Unique session ID (no state collisions)
+- File-locked task registry (no two sessions grab the same issue)
+- WAL-mode SQLite (concurrent writes without "database is locked")
 
 ---
 
