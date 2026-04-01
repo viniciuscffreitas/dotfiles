@@ -35,7 +35,7 @@ If ambiguous: "Does this add something new or fix something that should already 
 ## Bugfix Mode
 
 ```
-1. BEHAVIOR CONTRACT — invoke devflow:behavior-contract
+1. BEHAVIOR CONTRACT — invoke devflow-behavior-contract
 2. APPROVE           — user approves the contract (mandatory)
 3. TDD               — write tests that prove CHANGES and MUST NOT CHANGE
 4. IMPLEMENT         — minimal code to pass the tests
@@ -129,4 +129,4 @@ Use the Write tool to write this file. This is what feeds `task_telemetry` (toke
 - NEVER implement before having tests (except configs/docs/infra)
 - NEVER code UI without frontend gate (except backend-only work)
 - Atomic commits — one behavior per commit
-- For destructive operations: use devflow:wizard
+- For destructive operations: use devflow-wizard
