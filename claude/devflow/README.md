@@ -7,7 +7,7 @@
 *Automatic quality hooks, TDD enforcement, spec-driven workflows, risk-aware execution, and self-evaluating telemetry — for every project, without configuration.*
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-746-brightgreen.svg)](#running-tests)
+[![Tests](https://img.shields.io/badge/tests-793-brightgreen.svg)](#running-tests)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-orange.svg)](https://claude.ai/code)
 
@@ -158,7 +158,10 @@ These fire on every relevant Claude Code event. You never invoke them — they j
 | **weekly_intelligence** | CLI | 8-rule recommendation engine over the last N sessions. Closes the flywheel: what's working, what's slowing you down, what to build next. Use `python3 hooks/weekly_intelligence.py` |
 | **instinct_capture** | Stop | Auto-captures qualitative knowledge from sessions as JSONL per project. Writes to `~/.claude/devflow/instincts/{project}.jsonl`. Review and promote with: `python3.13 hooks/instinct_review.py` |
 | **secrets_gate** | PreToolUse (Write\|Edit) | Scans content for credentials, API keys, and tokens before writing to disk. Blocks if secrets detected |
-| **cost_tracker** | Stop | Records USD cost per session from JSONL usage metadata. Feeds TelemetryStore |
+| **cost_tracker** | Stop | Records USD cost per session including cache_read and cache_creation tokens with correct per-token pricing. Feeds TelemetryStore |
+| **subagent_tracker** | SubagentStart + SubagentStop | Tracks every AgentTool spawn — records subagent type, duration, and cost to `state/{session}/subagents.jsonl` |
+| **cwd_changed** | CWDChanged | Detects toolchain when working directory changes — warns when switching between project stacks |
+| **config_reload** | ConfigChange | Notifies which devflow hooks/skills are affected when `settings.json` or `devflow-config.json` changes |
 
 ---
 
@@ -365,7 +368,7 @@ cp ~/.claude/devflow/CLAUDE.md ~/.claude/CLAUDE.md
 
 ```bash
 cd ~/.claude/devflow && python3.13 -m pytest hooks/tests/ -q
-# 746 tests should pass
+# 793 tests should pass
 ```
 
 ### Uninstall
@@ -414,8 +417,11 @@ chmod +x ~/.claude/devflow/uninstall.sh && ~/.claude/devflow/uninstall.sh
     │   ├── instinct_review.py         ← CLI: review and promote captured instincts
     │   ├── secrets_gate.py            ← blocks credentials before disk write
     │   ├── cost_tracker.py            ← USD cost per session → TelemetryStore
+    │   ├── subagent_tracker.py        ← SubagentStart/Stop — cost + duration per spawned agent
+    │   ├── cwd_changed.py             ← CWDChanged — toolchain detection on directory switch
+    │   ├── config_reload.py           ← ConfigChange — notify on settings.json changes
     │   ├── telemetry_report.py        ← CLI: token cost per phase per project
-    │   └── tests/                     ← 746 tests
+    │   └── tests/                     ← 793 tests
     ├── telemetry/
     │   ├── store.py                   ← TelemetryStore: SQLite, 39 columns
     │   ├── migrate_sessions.py        ← one-time migration from sessions.jsonl
@@ -527,7 +533,7 @@ Each session gets:
 ```bash
 cd ~/.claude/devflow
 
-# All 746 tests
+# All 793 tests
 python3.13 -m pytest hooks/tests/ -q
 
 # Specific module

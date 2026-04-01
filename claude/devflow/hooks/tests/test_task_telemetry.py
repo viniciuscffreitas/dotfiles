@@ -1248,3 +1248,95 @@ def test_main_writes_to_sqlite_after_sessions_jsonl(tmp_path):
     assert "context_tokens_consumed" in call_payload
     assert "iterations_to_completion" in call_payload
     assert "stack" in call_payload
+
+
+# ---------------------------------------------------------------------------
+# AgentTool delegation detection — parse_session tracks Agent tool_use tokens
+# ---------------------------------------------------------------------------
+
+def _agent_tool_use(description: str = "do something", subagent_type: str = "general-purpose") -> dict:
+    return {
+        "type": "tool_use",
+        "id": "toolu_agent_001",
+        "name": "Agent",
+        "input": {"description": description, "subagent_type": subagent_type},
+    }
+
+
+def test_parse_session_no_agent_calls_delegation_tokens_zero(tmp_path):
+    """Sessions without Agent tool invocations have delegation_tokens=0."""
+    jsonl = tmp_path / "session.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry("2026-03-30T10:00:00.000Z", {"input_tokens": 200, "output_tokens": 20}) + "\n"
+    )
+    result = parse_session(jsonl)
+    assert result.get("delegation_tokens", 0) == 0
+
+
+def test_parse_session_agent_call_accumulates_delegation_tokens(tmp_path):
+    """Tokens accumulated before an Agent tool_use are counted as delegation_tokens."""
+    jsonl = tmp_path / "session.jsonl"
+    # Turn 1: 100 tokens, then spawns Agent
+    # Turn 2: 50 more tokens, no Agent
+    jsonl.write_text(
+        _make_assistant_entry(
+            "2026-03-30T10:00:00.000Z",
+            {"input_tokens": 100, "output_tokens": 10},
+            [_agent_tool_use("research something")],
+        ) + "\n"
+        + _make_assistant_entry(
+            "2026-03-30T10:01:00.000Z",
+            {"input_tokens": 50, "output_tokens": 5},
+        ) + "\n"
+    )
+    result = parse_session(jsonl)
+    # delegation_tokens should be > 0 (tokens in turn with Agent call)
+    assert result.get("delegation_tokens", 0) > 0
+
+
+def test_parse_session_multiple_agent_calls_sum(tmp_path):
+    """Multiple Agent calls sum their token contributions."""
+    jsonl = tmp_path / "session.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry(
+            "2026-03-30T10:00:00.000Z",
+            {"input_tokens": 100, "output_tokens": 10},
+            [_agent_tool_use("task A")],
+        ) + "\n"
+        + _make_assistant_entry(
+            "2026-03-30T10:01:00.000Z",
+            {"input_tokens": 200, "output_tokens": 20},
+            [_agent_tool_use("task B")],
+        ) + "\n"
+    )
+    result = parse_session(jsonl)
+    # Both Agent turns should contribute
+    assert result.get("delegation_tokens", 0) >= 110  # at least turn 1
+
+
+def test_parse_session_delegation_ratio_in_result(tmp_path):
+    """parse_session returns delegation_ratio field (delegation_tokens / total_tokens)."""
+    jsonl = tmp_path / "session.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry(
+            "2026-03-30T10:00:00.000Z",
+            {"input_tokens": 100, "output_tokens": 0},
+            [_agent_tool_use()],
+        ) + "\n"
+        + _make_assistant_entry(
+            "2026-03-30T10:01:00.000Z",
+            {"input_tokens": 100, "output_tokens": 0},
+        ) + "\n"
+    )
+    result = parse_session(jsonl)
+    assert "delegation_ratio" in result
+    ratio = result["delegation_ratio"]
+    assert 0.0 <= ratio <= 1.0
+
+
+def test_parse_session_zero_total_tokens_delegation_ratio_zero(tmp_path):
+    """delegation_ratio is 0.0 when total_tokens is 0 (no division by zero)."""
+    jsonl = tmp_path / "session.jsonl"
+    jsonl.write_text("")  # empty session
+    result = parse_session(jsonl)
+    assert result.get("delegation_ratio", 0.0) == 0.0

@@ -133,6 +133,38 @@ DEVFLOW_HOOKS = {
             ]
         },
     ],
+    "SubagentStart": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/subagent_tracker.py", "async": True},
+            ]
+        },
+    ],
+    "SubagentStop": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/subagent_tracker.py", "async": True},
+            ]
+        },
+    ],
+    "CWDChanged": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/cwd_changed.py"},
+            ]
+        },
+    ],
+    "ConfigChange": [
+        {
+            "matcher": "",
+            "hooks": [
+                {"type": "command", "command": f"python3 {devflow_dir}/hooks/config_reload.py", "async": True},
+            ]
+        },
+    ],
 }
 
 # Load existing settings
