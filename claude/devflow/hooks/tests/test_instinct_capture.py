@@ -549,14 +549,197 @@ def test_review_dismiss_updates_status_to_dismissed(tmp_path):
     store = InstinctStore(base_dir=tmp_path)
     store.append(_make_instinct(project="dismiss-proj", id="dis12345", status="pending"))
 
-    with (
-        patch("instinct_review.InstinctStore", return_value=store),
-        patch("builtins.input", return_value="d"),
-    ):
-        review_main(["--project", "dismiss-proj"])
+    with patch("instinct_review.InstinctStore", return_value=store):
+        review_main(["--project", "dismiss-proj", "--dismiss", "dis12345"])
 
     updated = store.load("dismiss-proj")[0]
     assert updated.status == "dismissed"
+
+
+# ---------------------------------------------------------------------------
+# instinct_review CLI — non-interactive mode (Prompt 16)
+# ---------------------------------------------------------------------------
+
+
+def test_review_default_no_tty_does_not_call_input(tmp_path):
+    """Default mode must not call input() — safe to run inside Claude Code."""
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="test-proj", id="ab1234cd", status="pending"))
+
+    called: list = []
+    with (
+        patch("instinct_review.InstinctStore", return_value=store),
+        patch("builtins.input", side_effect=lambda *a: called.append(a) or ""),
+    ):
+        code = review_main(["--project", "test-proj"])
+
+    assert code == 0
+    assert called == []
+
+
+def test_review_default_prints_pending_instincts(tmp_path, capsys):
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="test-proj", id="ab1234cd", status="pending"))
+
+    with patch("instinct_review.InstinctStore", return_value=store):
+        review_main(["--project", "test-proj"])
+
+    out = capsys.readouterr().out
+    assert "[devflow:instincts]" in out
+    assert "ab1234cd" in out
+    assert "PENDING REVIEW" in out
+
+
+def test_review_default_prints_suggested_commands(tmp_path, capsys):
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="test-proj", id="ab1234cd", status="pending"))
+
+    with patch("instinct_review.InstinctStore", return_value=store):
+        review_main(["--project", "test-proj"])
+
+    out = capsys.readouterr().out
+    assert "--promote" in out
+    assert "--dismiss" in out
+    assert "--promote-all" in out
+    assert "--interactive" in out
+
+
+def test_review_promote_single_by_id(tmp_path):
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="test-proj", id="ab1234cd", status="pending"))
+    rules_file = tmp_path / "conventions.md"
+
+    with patch("instinct_review.InstinctStore", return_value=store):
+        code = review_main(["--project", "test-proj", "--promote", "ab1234cd", str(rules_file)])
+
+    assert code == 0
+    updated = store.load("test-proj")[0]
+    assert updated.status == "promoted"
+    assert updated.promoted_to == str(rules_file)
+    assert rules_file.exists()
+    assert "Use Riverpod for state." in rules_file.read_text()
+
+
+def test_review_dismiss_single_by_id(tmp_path):
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="test-proj", id="ab1234cd", status="pending"))
+
+    with patch("instinct_review.InstinctStore", return_value=store):
+        code = review_main(["--project", "test-proj", "--dismiss", "ab1234cd"])
+
+    assert code == 0
+    updated = store.load("test-proj")[0]
+    assert updated.status == "dismissed"
+
+
+def test_review_promote_all_above_threshold(tmp_path):
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    high = Instinct(
+        id="high0001",
+        project="test-proj",
+        captured_at="2026-03-31T00:00:00+00:00",
+        session_id="sess-001",
+        content="High confidence item.",
+        confidence=0.9,
+        category="pattern",
+        status="pending",
+        promoted_to=None,
+    )
+    store.append(high)
+    low = Instinct(
+        id="low00001",
+        project="test-proj",
+        captured_at="2026-03-31T00:00:00+00:00",
+        session_id="sess-001",
+        content="Low confidence item.",
+        confidence=0.6,
+        category="pattern",
+        status="pending",
+        promoted_to=None,
+    )
+    store.append(low)
+    rules_file = tmp_path / "conventions.md"
+
+    with (
+        patch("instinct_review.InstinctStore", return_value=store),
+        patch("instinct_review._suggest_rules_path", return_value=str(rules_file)),
+    ):
+        code = review_main(["--project", "test-proj", "--promote-all"])
+
+    assert code == 0
+    loaded = store.load("test-proj")
+    promoted = [i for i in loaded if i.status == "promoted"]
+    still_pending = [i for i in loaded if i.status == "pending"]
+    assert len(promoted) == 1
+    assert promoted[0].id == "high0001"
+    assert len(still_pending) == 1
+    assert still_pending[0].id == "low00001"
+
+
+def test_review_promote_threshold_override(tmp_path):
+    """confidence=0.8 with default threshold=0.85 would NOT promote; threshold=0.7 WILL."""
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="test-proj", id="ab1234cd", status="pending"))
+    rules_file = tmp_path / "conventions.md"
+
+    with (
+        patch("instinct_review.InstinctStore", return_value=store),
+        patch("instinct_review._suggest_rules_path", return_value=str(rules_file)),
+    ):
+        code = review_main(["--project", "test-proj", "--promote-all", "--promote-threshold", "0.7"])
+
+    assert code == 0
+    updated = store.load("test-proj")[0]
+    assert updated.status == "promoted"
+
+
+def test_review_interactive_flag_calls_input(tmp_path):
+    from instinct_review import main as review_main
+    store = InstinctStore(base_dir=tmp_path)
+    store.append(_make_instinct(project="test-proj", id="ab1234cd", status="pending"))
+
+    called: list = []
+    with (
+        patch("instinct_review.InstinctStore", return_value=store),
+        patch("builtins.input", side_effect=lambda *a: called.append(a) or "s"),
+    ):
+        code = review_main(["--project", "test-proj", "--interactive"])
+
+    assert code == 0
+    assert len(called) >= 1
+
+
+def test_review_smart_path_momease():
+    from instinct_review import _suggest_rules_path
+    path = _suggest_rules_path("momease")
+    assert path.endswith("rules/momease/conventions.md")
+
+
+def test_review_smart_path_devflow():
+    from instinct_review import _suggest_rules_path
+    path = _suggest_rules_path("devflow")
+    assert path.endswith("rules/devflow/conventions.md")
+
+
+def test_review_smart_path_unknown():
+    from instinct_review import _suggest_rules_path
+    path = _suggest_rules_path("my-custom-project")
+    assert "my-custom-project" in path
+    assert path.endswith("conventions.md")
+
+
+def test_review_never_raises_missing_project(tmp_path):
+    from instinct_review import main as review_main
+    with patch("instinct_review.InstinctStore", return_value=InstinctStore(base_dir=tmp_path)):
+        code = review_main(["--project", "totally-missing-project-xyz"])
+    assert code == 0
 
 
 # ---------------------------------------------------------------------------
