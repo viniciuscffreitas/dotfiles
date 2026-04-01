@@ -20,13 +20,22 @@ from telemetry.store import TelemetryStore
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_hook_data(model: str, input_tokens: int, output_tokens: int, session_id: str = "sess-1") -> dict:
+def _make_hook_data(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    session_id: str = "sess-1",
+    cache_read_input_tokens: int = 0,
+    cache_creation_input_tokens: int = 0,
+) -> dict:
     return {
         "session_id": session_id,
         "model": model,
         "usage": {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cache_read_input_tokens": cache_read_input_tokens,
+            "cache_creation_input_tokens": cache_creation_input_tokens,
         },
     }
 
@@ -244,3 +253,152 @@ def test_cost_output_only_sonnet(tmp_path):
     store = TelemetryStore(db_path=db)
     rows = store.get_recent(1)
     assert abs(rows[0]["cost_usd"] - 15.00) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# Cache token pricing — distinct rates vs regular input
+# ---------------------------------------------------------------------------
+
+def test_cache_read_sonnet_cheaper_than_input(tmp_path):
+    """cache_read_input_tokens costs $0.30/M on sonnet (10% of input $3/M)."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-sonnet-4-6",
+        input_tokens=0,
+        output_tokens=0,
+        session_id="sess-cache-read",
+        cache_read_input_tokens=1_000_000,
+    )
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    # $0.30/M * 1M = $0.30
+    assert abs(rows[0]["cost_usd"] - 0.30) < 0.001
+
+
+def test_cache_creation_sonnet_more_expensive_than_input(tmp_path):
+    """cache_creation_input_tokens costs $3.75/M on sonnet (125% of input $3/M)."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-sonnet-4-6",
+        input_tokens=0,
+        output_tokens=0,
+        session_id="sess-cache-create",
+        cache_creation_input_tokens=1_000_000,
+    )
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    # $3.75/M * 1M = $3.75
+    assert abs(rows[0]["cost_usd"] - 3.75) < 0.001
+
+
+def test_cache_read_opus(tmp_path):
+    """cache_read_input_tokens costs $1.50/M on opus."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-opus-4-6",
+        input_tokens=0,
+        output_tokens=0,
+        session_id="sess-opus-cache-read",
+        cache_read_input_tokens=1_000_000,
+    )
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    assert abs(rows[0]["cost_usd"] - 1.50) < 0.001
+
+
+def test_cache_creation_opus(tmp_path):
+    """cache_creation_input_tokens costs $18.75/M on opus."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-opus-4-6",
+        input_tokens=0,
+        output_tokens=0,
+        session_id="sess-opus-cache-create",
+        cache_creation_input_tokens=1_000_000,
+    )
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    assert abs(rows[0]["cost_usd"] - 18.75) < 0.001
+
+
+def test_cache_read_haiku(tmp_path):
+    """cache_read_input_tokens costs $0.08/M on haiku."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-haiku-4-5-20251001",
+        input_tokens=0,
+        output_tokens=0,
+        session_id="sess-haiku-cache-read",
+        cache_read_input_tokens=1_000_000,
+    )
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    assert abs(rows[0]["cost_usd"] - 0.08) < 0.001
+
+
+def test_mixed_all_token_types_sonnet(tmp_path):
+    """All 4 token types together on sonnet — costs sum correctly."""
+    db = tmp_path / "t.db"
+    # 1M each: input=$3, output=$15, cache_read=$0.30, cache_creation=$3.75 → $22.05
+    hook_data = _make_hook_data(
+        "claude-sonnet-4-6",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        session_id="sess-mixed",
+        cache_read_input_tokens=1_000_000,
+        cache_creation_input_tokens=1_000_000,
+    )
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    assert abs(rows[0]["cost_usd"] - 22.05) < 0.001
+
+
+def test_cache_tokens_absent_defaults_to_zero(tmp_path):
+    """Hook data without cache fields behaves same as zero cache tokens."""
+    db = tmp_path / "t.db"
+    # Old-style hook data without cache fields
+    hook_data = {
+        "session_id": "sess-no-cache",
+        "model": "claude-sonnet-4-6",
+        "usage": {"input_tokens": 1_000_000, "output_tokens": 0},
+    }
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    # No cache fields → only input cost $3.00
+    assert abs(rows[0]["cost_usd"] - 3.00) < 0.001
+
+
+def test_output_shows_cache_stats_when_present(tmp_path):
+    """Output line includes cache token counts when cache tokens > 0."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-sonnet-4-6",
+        input_tokens=1_000,
+        output_tokens=500,
+        cache_read_input_tokens=50_000,
+        cache_creation_input_tokens=5_000,
+    )
+    _, out = _run_main(hook_data, db)
+    assert "cache_read" in out or "cr=" in out or "50.0k" in out
+
+
+def test_output_no_cache_stats_when_absent(tmp_path):
+    """Output line does not mention cache when cache tokens are 0."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data("claude-sonnet-4-6", input_tokens=10_000, output_tokens=2_000)
+    _, out = _run_main(hook_data, db)
+    assert "cache" not in out.lower()
