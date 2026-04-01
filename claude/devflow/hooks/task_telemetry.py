@@ -147,6 +147,7 @@ def parse_session(jsonl_path: Path) -> dict:
     """
     all_phases: list[tuple[str, str, Optional[str], int]] = []
     running = 0
+    delegation_tokens = 0  # tokens in turns where Agent tool was invoked
     current_cycle: Optional[dict] = None  # per-cycle inference state
 
     def _new_cycle(task_id: Optional[str]) -> dict:
@@ -194,7 +195,16 @@ def parse_session(jsonl_path: Path) -> dict:
                 if usage:
                     running += _tokens_for(usage)
 
-                for item in entry.get("message", {}).get("content", []):
+                content_items = entry.get("message", {}).get("content", [])
+                turn_tokens = _tokens_for(usage) if usage else 0
+                has_agent_call = any(
+                    isinstance(it, dict) and it.get("type") == "tool_use" and it.get("name") == "Agent"
+                    for it in content_items
+                )
+                if has_agent_call:
+                    delegation_tokens += turn_tokens
+
+                for item in content_items:
                     if not isinstance(item, dict) or item.get("type") != "tool_use":
                         continue
                     name = item.get("name", "")
@@ -261,12 +271,16 @@ def parse_session(jsonl_path: Path) -> dict:
     _flush(current_cycle)
     all_phases.sort(key=lambda x: x[3])
 
+    delegation_ratio = delegation_tokens / running if running > 0 else 0.0
+
     return {
         "phases": [
             {"ts": ts, "phase": phase, "task_id": task_id, "tokens_cumulative": cum}
             for ts, phase, task_id, cum in all_phases
         ],
         "total_tokens": running,
+        "delegation_tokens": delegation_tokens,
+        "delegation_ratio": delegation_ratio,
     }
 
 
