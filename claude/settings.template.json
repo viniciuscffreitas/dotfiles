@@ -151,15 +151,6 @@
           }
         ]
       },
-      {
-        "matcher": "Read|Write|Edit|MultiEdit|Bash|Glob|Grep",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 __HOME__/.claude/devflow/hooks/context_monitor.py"
-          }
-        ]
-      }
     ],
     "PreCompact": [
       {
