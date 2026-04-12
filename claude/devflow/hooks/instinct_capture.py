@@ -207,7 +207,7 @@ def main() -> int:
             print(f"[devflow:instinct] warning: append failed: {e}", file=sys.stderr)
 
     if captured > 0:
-        print(f"[devflow:instinct] captured {captured} instinct(s) for {project}")
+        print(f"[devflow:instinct] captured {captured} instinct(s) for {project}", file=sys.stderr)
         # Record in TelemetryStore (best-effort)
         try:
             from telemetry.store import TelemetryStore

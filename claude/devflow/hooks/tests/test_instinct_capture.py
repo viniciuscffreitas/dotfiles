@@ -453,9 +453,9 @@ def test_capture_prints_devflow_instinct_prefix_on_success(tmp_path, capsys):
 
     assert code == 0
     captured = capsys.readouterr()
-    assert "[devflow:instinct]" in captured.out
-    assert "captured" in captured.out
-    assert "mom-ease" in captured.out
+    assert "[devflow:instinct]" in captured.err
+    assert "captured" in captured.err
+    assert "mom-ease" in captured.err
 
 
 def test_capture_skips_when_tool_use_count_less_than_3(tmp_path):
