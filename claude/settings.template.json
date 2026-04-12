@@ -243,5 +243,15 @@
   },
   "linear": {
     "apiKey": "__LINEAR_API_KEY__"
-  }
+  },
+  "env": {
+    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
+    "MAX_THINKING_TOKENS": "8000"
+  },
+  "contextCompactionThreshold": 80,
+  "model": "sonnet"
 }

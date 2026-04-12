@@ -1,3 +1,9 @@
+## Response style
+- No sycophantic openers ("Sure!", "Great!")
+- No closing summaries unless asked
+- Code changes: changed blocks only, not full files
+- No inline comments unless style guide requires
+
 ## devflow v2.2 — Workflow & Quality
 
 ### When to use /spec
