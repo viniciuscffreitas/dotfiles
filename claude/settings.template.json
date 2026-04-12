@@ -150,7 +150,7 @@
             "command": "python3 __HOME__/.claude/devflow/hooks/tdd_enforcer.py"
           }
         ]
-      },
+      }
     ],
     "PreCompact": [
       {
