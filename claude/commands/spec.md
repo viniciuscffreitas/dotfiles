@@ -9,4 +9,6 @@ If no description was provided, ask: "What do you want to build or fix?" — acc
 Invoke `devflow-spec-driven-dev` with the description.
 Auto-detects: feature (new functionality) vs bugfix (existing broken behavior).
 
+IMPORTANT: If the skill `devflow-spec-driven-dev` is not found, stop and tell the user: "devflow-spec-driven-dev skill is missing — run `/sync` to reinstall." Do NOT fall back to a manual workflow silently.
+
 Examples: `/spec add pagination to users`, `/spec fix: photos not loading on iOS`
