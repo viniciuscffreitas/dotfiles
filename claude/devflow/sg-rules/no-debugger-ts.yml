@@ -1,0 +1,12 @@
+id: no-debugger-ts
+language: typescript
+message: "stray `debugger;` statement — remove before commit"
+severity: warning
+ignores:
+  - "**/test/**"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.spec.ts"
+  - "**/*.spec.tsx"
+rule:
+  pattern: debugger

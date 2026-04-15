@@ -1,0 +1,12 @@
+id: no-print-dart
+language: dart
+message: "use a logger instead of print() in production code"
+severity: warning
+files:
+  - "lib/**/*.dart"
+ignores:
+  - "**/test/**"
+  - "**/*.g.dart"
+  - "**/*.freezed.dart"
+rule:
+  pattern: print($$$)

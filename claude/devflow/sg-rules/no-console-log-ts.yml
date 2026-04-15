@@ -1,0 +1,16 @@
+id: no-console-log-ts
+language: typescript
+message: "avoid console.log in production code — use a structured logger"
+severity: warning
+ignores:
+  - "**/test/**"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.spec.ts"
+  - "**/*.spec.tsx"
+  - "**/scripts/**"
+rule:
+  any:
+    - pattern: console.log($$$)
+    - pattern: console.warn($$$)
+    - pattern: console.error($$$)
