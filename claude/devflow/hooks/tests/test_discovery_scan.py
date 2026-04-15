@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from _util import ToolchainKind
 from discovery_scan import (
     _count_all_learned_skills,
+    _detect_ast_grep,
     _ensure_learned_skills_dir,
     _has_docker,
     _has_icloud,
@@ -35,6 +36,27 @@ from discovery_scan import (
     find_project_root,
     main,
 )
+
+
+def test_detect_ast_grep_present(monkeypatch):
+    import discovery_scan
+    monkeypatch.setattr(discovery_scan.shutil, "which", lambda name: "/usr/local/bin/sg" if name == "sg" else None)
+    assert _detect_ast_grep() == "present"
+
+
+def test_detect_ast_grep_missing(monkeypatch):
+    import discovery_scan
+    monkeypatch.setattr(discovery_scan.shutil, "which", lambda name: None)
+    assert _detect_ast_grep() == "missing"
+
+
+def test_detect_ast_grep_fallback_to_ast_grep_name(monkeypatch):
+    import discovery_scan
+    monkeypatch.setattr(
+        discovery_scan.shutil, "which",
+        lambda name: "/usr/bin/ast-grep" if name == "ast-grep" else None,
+    )
+    assert _detect_ast_grep() == "present"
 
 
 # ---------------------------------------------------------------------------

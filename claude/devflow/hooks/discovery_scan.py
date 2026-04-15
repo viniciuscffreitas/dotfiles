@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -65,6 +66,13 @@ def _load_settings() -> dict:
         return json.loads(SETTINGS_PATH.read_text())
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def _detect_ast_grep() -> str:
+    """Return 'present' if the `sg` (ast-grep) binary is on PATH, else 'missing'."""
+    if shutil.which("sg") or shutil.which("ast-grep"):
+        return "present"
+    return "missing"
 
 
 def find_project_root(start: Path, max_levels: int = 6) -> Path:
@@ -296,6 +304,8 @@ def main() -> int:
         lines.append(f"LEARNED_SKILLS={','.join(all_learned)}")
     else:
         lines.append("LEARNED_SKILLS=none")
+
+    lines.append(f"AST_GREP={_detect_ast_grep()}")
 
     print("\n".join(lines))
     return 0
