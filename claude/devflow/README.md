@@ -132,7 +132,7 @@ These fire on every relevant Claude Code event. You never invoke them — they j
 | Hook | Event | What it does |
 |------|-------|-------------|
 | **discovery_scan** | SessionStart | Detects project structure: toolchain (Node.js, Flutter, Go, Rust, Maven, Python), issue tracker (Linear, GitHub Issues, Jira, TODO.md), design system, test framework. Manages learned skill symlinks. Outputs `[devflow:project-profile]` to context |
-| **file_checker** | PostToolUse (Write\|Edit\|MultiEdit) | Runs the right formatter + linter for your toolchain. Warns at 400 lines, alerts at 600. Skips test files, config files, and generated code (`.g.dart`, `.freezed.dart`, `.pb.go`, etc.) |
+| **file_checker** | PostToolUse (Write\|Edit\|MultiEdit) | Runs the right formatter + linter for your toolchain. Warns at 400 lines, alerts at 600. Applies structural [sg rules](docs/sg-rules.md) when `ast-grep` is installed. Skips test files, config files, and generated code (`.g.dart`, `.freezed.dart`, `.pb.go`, etc.) |
 | **tdd_enforcer** | PostToolUse (Write\|Edit\|MultiEdit) | Detects implementation without a corresponding test. Suggests the exact test path using language-aware directory mirroring. Non-blocking — advises, never blocks |
 | **context_monitor** | PostToolUse (broad) | Tracks context usage against the compaction threshold (~167k tokens). Warns at 80%, cautions at 90% |
 | **pre_push_gate** | PreToolUse (Bash) | Intercepts `git push`, runs 4 deterministic linters + language-specific quality gate (pytest/mypy for Python, flutter analyze, go vet, etc.). Blocks the push if any check fails |
@@ -346,6 +346,7 @@ pre_push_gate adds language-specific test runners: `pytest --tb=short -q` + opti
 - Claude API access: `instinct_capture.py` and `post_task_judge.py` call `claude -p` (Haiku) for LLM evaluation. These hooks exit 0 gracefully if the call fails, but without API access they produce no output.
 - git: required for `pre_push_gate.py` and `parallel_launch.sh`
 - macOS: `desktop_notify.py` uses `osascript` for notifications. On Linux/WSL, the hook silently skips notification and exits 0.
+- **Optional**: [ast-grep](https://ast-grep.github.io) (`brew install ast-grep`) enables structural code rules in `file_checker`. See [docs/sg-rules.md](docs/sg-rules.md). When missing, rule enforcement silently skips.
 
 ### Install
 
