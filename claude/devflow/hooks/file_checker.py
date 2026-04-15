@@ -21,6 +21,8 @@ from _util import (
     read_hook_stdin,
     run_command,
 )
+import _sg
+from _sg import SgFinding
 
 _SKIP_PATTERNS = {
     "test_", "_test.", ".test.", "_spec.", ".spec.",
@@ -160,6 +162,13 @@ _CHECKERS = {
 }
 
 
+def _format_sg_findings(findings: list[SgFinding]) -> str:
+    if not findings:
+        return ""
+    parts = [f"{f.rule_id}@L{f.line}: {f.message}" for f in findings]
+    return "sg: " + "; ".join(parts)
+
+
 def main() -> int:
     hook_data = read_hook_stdin()
     file_path = get_edited_file(hook_data)
@@ -180,12 +189,21 @@ def main() -> int:
         root = project_root or file_path.parent
         issues = _CHECKERS[toolchain](file_path, root)
 
-    if issues or length_msg:
+    sg_line = ""
+    try:
+        sg_findings = _sg.run_for_file(file_path, _sg.load_rules(project_root))
+        sg_line = _format_sg_findings(sg_findings)
+    except Exception:  # noqa: BLE001 — hook must never raise
+        sg_line = ""
+
+    if issues or length_msg or sg_line:
         parts = []
         if issues:
             parts.extend(issues)
         if length_msg:
             parts.append(length_msg)
+        if sg_line:
+            parts.append(sg_line)
         context = "\n".join(parts)
         print(hook_context(f"[devflow quality]\n{context}"))
 

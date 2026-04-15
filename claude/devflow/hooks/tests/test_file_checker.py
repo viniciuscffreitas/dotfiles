@@ -2,8 +2,38 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from file_checker import should_skip, get_length_message, _check_maven, _check_flutter
+from file_checker import should_skip, get_length_message, _check_maven, _check_flutter, _format_sg_findings
+from _sg import SgFinding
 import shutil
+
+
+def test_format_sg_findings_empty():
+    assert _format_sg_findings([]) == ""
+
+
+def test_format_sg_findings_single():
+    f = SgFinding(
+        rule_id="no-print-dart",
+        file=Path("lib/foo.dart"),
+        line=7,
+        column=3,
+        message="use SecureLogger instead of print()",
+        severity="warning",
+    )
+    out = _format_sg_findings([f])
+    assert "no-print-dart" in out
+    assert "L7" in out
+    assert "SecureLogger" in out
+
+
+def test_format_sg_findings_multiple():
+    findings = [
+        SgFinding(rule_id="r1", file=Path("a.ts"), line=1, column=1, message="m1", severity="warning"),
+        SgFinding(rule_id="r2", file=Path("a.ts"), line=9, column=2, message="m2", severity="warning"),
+    ]
+    out = _format_sg_findings(findings)
+    assert "r1" in out and "r2" in out
+    assert "L1" in out and "L9" in out
 
 
 def test_skip_test_files():
