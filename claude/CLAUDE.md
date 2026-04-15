@@ -73,6 +73,11 @@ Any delete, reset, migration, or irreversible overwrite:
 ### Context Discipline
 Before exploring any codebase, explicitly declare which files are relevant to the task. Use Grep before Read. Never read entire directories to orient yourself.
 
+For code *structure* searches (function calls, definitions, usages), prefer `sg` (ast-grep) via Bash when `AST_GREP=present` in the project profile. `Grep` remains the right tool for text, comments, docs, and configs.
+
+### No Explore subagent
+The `Agent(Explore)` subagent is DENIED globally in `settings.json` — do not try to invoke it, do not suggest enabling it. Exploration happens in the main agent using `Grep`/`Glob` first, then targeted `Read`. Rationale: Explore rediscovers the repo on every call and burns 100k+ tokens for lookups that `grep` resolves in seconds. If a task feels too broad for direct tools, narrow it (declare hypotheses, grep for symbols) instead of reaching for a broad scanner. Other subagents (`general-purpose`, `Plan`, review agents, etc.) remain available.
+
 ### Subagents
 - Subagents DO NOT spawn other subagents
 - All delegation flows through the Main Agent
