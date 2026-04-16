@@ -21,20 +21,28 @@ try:
 except ImportError:
     TelemetryStore = None  # type: ignore[assignment,misc]
 
-# Pricing in USD per million tokens (as of 2026-03)
-# cache_read is ~10% of input; cache_creation is ~125% of input
+# Pricing in USD per million tokens (last revised 2026-04-16).
+# Source: https://platform.claude.com/docs/en/about-claude/pricing
+# Convention: cache_read = 10% of input; cache_creation = 125% of input.
+# Note: Opus 4.7 shares pricing with 4.6 but uses a new tokenizer that can
+# produce up to ~1.35x more tokens for the same content — see
+# docs/opus-4-7-policy.md for migration guidance.
 CLAUDE_PRICING: dict[str, dict[str, float]] = {
+    "claude-opus-4-7": {
+        "input": 5.00, "output": 25.00,
+        "cache_read": 0.50, "cache_creation": 6.25,
+    },
     "claude-opus-4-6": {
-        "input": 15.00, "output": 75.00,
-        "cache_read": 1.50, "cache_creation": 18.75,
+        "input": 5.00, "output": 25.00,
+        "cache_read": 0.50, "cache_creation": 6.25,
     },
     "claude-sonnet-4-6": {
         "input": 3.00, "output": 15.00,
         "cache_read": 0.30, "cache_creation": 3.75,
     },
     "claude-haiku-4-5-20251001": {
-        "input": 0.80, "output": 4.00,
-        "cache_read": 0.08, "cache_creation": 1.00,
+        "input": 1.00, "output": 5.00,
+        "cache_read": 0.10, "cache_creation": 1.25,
     },
 }
 
@@ -48,7 +56,15 @@ def _format_k(n: int) -> str:
 
 
 def _compute_cost(model: str, usage: dict) -> float:
-    pricing = CLAUDE_PRICING.get(model, CLAUDE_PRICING[_FALLBACK_MODEL])
+    pricing = CLAUDE_PRICING.get(model)
+    if pricing is None:
+        print(
+            f"[devflow:cost] WARN unknown model '{model}' — falling back to "
+            f"{_FALLBACK_MODEL} pricing. Update CLAUDE_PRICING in "
+            f"hooks/cost_tracker.py.",
+            file=sys.stderr,
+        )
+        pricing = CLAUDE_PRICING[_FALLBACK_MODEL]
     input_tok = int(usage.get("input_tokens") or 0)
     output_tok = int(usage.get("output_tokens") or 0)
     cache_read = int(usage.get("cache_read_input_tokens") or 0)

@@ -66,13 +66,23 @@ def _run_main(hook_data: dict, tmp_db: Path) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 
 def test_cost_opus(tmp_path):
-    """claude-opus-4-6: $15/M input, $75/M output."""
+    """claude-opus-4-6: $5/M input, $25/M output (official Anthropic pricing 2026)."""
     db = tmp_path / "t.db"
     hook_data = _make_hook_data("claude-opus-4-6", input_tokens=1_000_000, output_tokens=1_000_000)
     code, out = _run_main(hook_data, db)
     assert code == 0
-    # 1M input = $15, 1M output = $75 → $90.00
-    assert "$90.00" in out
+    # 1M input = $5, 1M output = $25 → $30.00
+    assert "$30.00" in out
+
+
+def test_cost_opus_47(tmp_path):
+    """claude-opus-4-7: same $5/$25 pricing as 4.6 (different tokenizer behavior)."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data("claude-opus-4-7", input_tokens=1_000_000, output_tokens=1_000_000)
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    # 1M input = $5, 1M output = $25 → $30.00
+    assert "$30.00" in out
 
 
 def test_cost_sonnet(tmp_path):
@@ -86,13 +96,13 @@ def test_cost_sonnet(tmp_path):
 
 
 def test_cost_haiku(tmp_path):
-    """claude-haiku-4-5-20251001: $0.80/M input, $4/M output."""
+    """claude-haiku-4-5-20251001: $1/M input, $5/M output (official pricing 2026)."""
     db = tmp_path / "t.db"
     hook_data = _make_hook_data("claude-haiku-4-5-20251001", input_tokens=1_000_000, output_tokens=1_000_000)
     code, out = _run_main(hook_data, db)
     assert code == 0
-    # 1M input = $0.80, 1M output = $4 → $4.80
-    assert "$4.80" in out
+    # 1M input = $1, 1M output = $5 → $6.00
+    assert "$6.00" in out
 
 
 def test_cost_small_session_sonnet(tmp_path):
@@ -115,6 +125,24 @@ def test_fallback_unknown_model_uses_sonnet_pricing(tmp_path):
     code, out = _run_main(hook_data, db)
     assert code == 0
     assert "$18.00" in out
+
+
+def test_unknown_model_warns_on_stderr(tmp_path, capsys):
+    """Fallback to sonnet pricing must emit a stderr warning for visibility."""
+    db = tmp_path / "t.db"
+    import hooks.cost_tracker as ct
+    from importlib import reload
+    reload(ct)
+    hook_data = _make_hook_data("claude-future-model-99", input_tokens=100, output_tokens=100)
+    store = TelemetryStore(db_path=db)
+    with (
+        patch("hooks.cost_tracker.read_hook_stdin", return_value=hook_data),
+        patch("hooks.cost_tracker.TelemetryStore", return_value=store),
+    ):
+        ct.main()
+    captured = capsys.readouterr()
+    assert "claude-future-model-99" in captured.err
+    assert "devflow:cost" in captured.err or "fallback" in captured.err.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +324,7 @@ def test_cache_creation_sonnet_more_expensive_than_input(tmp_path):
 
 
 def test_cache_read_opus(tmp_path):
-    """cache_read_input_tokens costs $1.50/M on opus."""
+    """cache_read_input_tokens costs $0.50/M on opus (10% of $5 input)."""
     db = tmp_path / "t.db"
     hook_data = _make_hook_data(
         "claude-opus-4-6",
@@ -309,11 +337,11 @@ def test_cache_read_opus(tmp_path):
     assert code == 0
     store = TelemetryStore(db_path=db)
     rows = store.get_recent(1)
-    assert abs(rows[0]["cost_usd"] - 1.50) < 0.001
+    assert abs(rows[0]["cost_usd"] - 0.50) < 0.001
 
 
 def test_cache_creation_opus(tmp_path):
-    """cache_creation_input_tokens costs $18.75/M on opus."""
+    """cache_creation_input_tokens costs $6.25/M on opus (125% of $5 input)."""
     db = tmp_path / "t.db"
     hook_data = _make_hook_data(
         "claude-opus-4-6",
@@ -326,11 +354,28 @@ def test_cache_creation_opus(tmp_path):
     assert code == 0
     store = TelemetryStore(db_path=db)
     rows = store.get_recent(1)
-    assert abs(rows[0]["cost_usd"] - 18.75) < 0.001
+    assert abs(rows[0]["cost_usd"] - 6.25) < 0.001
+
+
+def test_cache_read_opus_47(tmp_path):
+    """Opus 4.7 inherits same cache_read pricing as 4.6: $0.50/M."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-opus-4-7",
+        input_tokens=0,
+        output_tokens=0,
+        session_id="sess-opus47-cache-read",
+        cache_read_input_tokens=1_000_000,
+    )
+    code, out = _run_main(hook_data, db)
+    assert code == 0
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    assert abs(rows[0]["cost_usd"] - 0.50) < 0.001
 
 
 def test_cache_read_haiku(tmp_path):
-    """cache_read_input_tokens costs $0.08/M on haiku."""
+    """cache_read_input_tokens costs $0.10/M on haiku (10% of $1 input)."""
     db = tmp_path / "t.db"
     hook_data = _make_hook_data(
         "claude-haiku-4-5-20251001",
@@ -343,7 +388,7 @@ def test_cache_read_haiku(tmp_path):
     assert code == 0
     store = TelemetryStore(db_path=db)
     rows = store.get_recent(1)
-    assert abs(rows[0]["cost_usd"] - 0.08) < 0.001
+    assert abs(rows[0]["cost_usd"] - 0.10) < 0.001
 
 
 def test_mixed_all_token_types_sonnet(tmp_path):
