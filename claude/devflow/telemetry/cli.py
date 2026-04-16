@@ -2,9 +2,10 @@
 devflow telemetry CLI — quick-stats commands.
 
 Usage:
-    python3.13 telemetry/cli.py stats     — summary statistics
-    python3.13 telemetry/cli.py recent    — last 10 tasks
-    python3.13 telemetry/cli.py anxiety   — context anxiety cases (>60k tokens at first action)
+    python3.13 telemetry/cli.py stats              — summary statistics
+    python3.13 telemetry/cli.py stats --by-model   — cost + runs grouped by model
+    python3.13 telemetry/cli.py recent             — last 10 tasks
+    python3.13 telemetry/cli.py anxiety            — context anxiety cases (>60k tokens at first action)
 """
 from __future__ import annotations
 
@@ -22,7 +23,29 @@ def _store() -> TelemetryStore:
     return TelemetryStore(db_path=Path(db_env)) if db_env else TelemetryStore()
 
 
+def cmd_stats_by_model() -> None:
+    """Cost + run count broken down per model. Legacy rows (model IS NULL)
+    are shown explicitly so they don't silently drop out of the total."""
+    store = _store()
+    buckets = store.cost_by_model()
+    if not buckets:
+        print("No telemetry records yet.")
+        return
+    print(f"{'model':<34} {'runs':>6}  {'total_cost_usd':>14}")
+    print("-" * 58)
+    for row in buckets:
+        print(
+            f"{str(row['model']):<34} "
+            f"{row['runs']:>6}  "
+            f"${row['total_cost_usd']:>13.2f}"
+        )
+
+
 def cmd_stats() -> None:
+    # Sub-flag: stats --by-model
+    if "--by-model" in sys.argv[2:]:
+        cmd_stats_by_model()
+        return
     store = _store()
     s = store.summary_stats()
     print(f"{'Total tasks:':<26} {s['total_tasks']}")

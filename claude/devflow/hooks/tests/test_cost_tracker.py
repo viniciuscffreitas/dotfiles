@@ -271,6 +271,21 @@ def test_cost_usd_zero_tokens_writes_zero(tmp_path):
     assert rows[0]["cost_usd"] == 0.0
 
 
+def test_model_written_to_store(tmp_path):
+    """cost_tracker must persist the model name for by-model aggregation."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-opus-4-7",
+        input_tokens=500,
+        output_tokens=300,
+        session_id="sess-opus47-persist",
+    )
+    _run_main(hook_data, db)
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    assert rows[0]["model"] == "claude-opus-4-7"
+
+
 def test_cost_output_only_sonnet(tmp_path):
     """Output-only session: $15/M output on sonnet."""
     db = tmp_path / "t.db"

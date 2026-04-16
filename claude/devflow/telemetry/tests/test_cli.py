@@ -144,6 +144,34 @@ class TestCmdAnxiety:
 
 
 # ---------------------------------------------------------------------------
+# cmd_stats --by-model
+# ---------------------------------------------------------------------------
+
+class TestCmdStatsByModel:
+    def test_by_model_exits_zero_on_empty_db(self, tmp_path):
+        db = tmp_path / "empty.db"
+        result = run_cli("stats", "--by-model", env_db=db)
+        assert result.returncode == 0
+
+    def test_by_model_shows_breakdown(self, tmp_path):
+        db = tmp_path / "mix.db"
+        _seed_db(db, [
+            {"task_id": "a", "model": "claude-opus-4-7", "cost_usd": 1.20},
+            {"task_id": "b", "model": "claude-opus-4-7", "cost_usd": 2.80},
+            {"task_id": "c", "model": "claude-sonnet-4-6", "cost_usd": 0.15},
+            {"task_id": "d", "model": None, "cost_usd": 0.05},  # legacy
+        ])
+        result = run_cli("stats", "--by-model", env_db=db)
+        assert result.returncode == 0
+        # Shows at least each model name and the numeric total
+        assert "claude-opus-4-7" in result.stdout
+        assert "claude-sonnet-4-6" in result.stdout
+        assert "4.00" in result.stdout  # 1.20 + 2.80
+        # Legacy rows are visibly labelled, not hidden
+        assert "legacy" in result.stdout.lower() or "NULL" in result.stdout
+
+
+# ---------------------------------------------------------------------------
 # Unknown command
 # ---------------------------------------------------------------------------
 

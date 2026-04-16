@@ -111,7 +111,9 @@ def main() -> int:
 
         if TelemetryStore is not None and session_id:
             try:
-                TelemetryStore().record({"task_id": session_id, "cost_usd": cost_usd})
+                TelemetryStore().record(
+                    {"task_id": session_id, "cost_usd": cost_usd, "model": model}
+                )
             except Exception:
                 pass
 

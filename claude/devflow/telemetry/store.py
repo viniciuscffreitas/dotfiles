@@ -37,6 +37,7 @@ _COLUMNS = [
     "cost_usd",
     "session_id",
     "context_anxiety_score",
+    "model",
 ]
 
 _CREATE_TABLE = """
@@ -79,7 +80,8 @@ CREATE TABLE IF NOT EXISTS task_executions (
     instincts_captured_count        INTEGER,
     cost_usd                        REAL,
     session_id                      TEXT,
-    context_anxiety_score           REAL
+    context_anxiety_score           REAL,
+    model                           TEXT
 )
 """
 
@@ -119,6 +121,7 @@ class TelemetryStore:
                     ("cost_usd", "REAL"),
                     ("session_id", "TEXT"),
                     ("context_anxiety_score", "REAL"),
+                    ("model", "TEXT"),
                 ]
                 for col, col_type in _new_cols:
                     try:
@@ -190,6 +193,26 @@ class TelemetryStore:
                 (cutoff,),
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    def cost_by_model(self) -> list[dict]:
+        """Aggregate runs and total cost grouped by model.
+
+        Rows where model IS NULL (legacy, pre-2026-04-16) are returned under
+        the sentinel "NULL (legacy)" so they surface in reports instead of
+        silently disappearing into a NULL bucket.
+        Sorted by total_cost_usd descending.
+        """
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT "
+                "  COALESCE(model, 'NULL (legacy)') AS model, "
+                "  COUNT(*) AS runs, "
+                "  COALESCE(SUM(cost_usd), 0.0) AS total_cost_usd "
+                "FROM task_executions "
+                "GROUP BY model "
+                "ORDER BY total_cost_usd DESC, runs DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_context_anxiety_cases(self, threshold: int = 60_000) -> list[dict]:
         """Records where context_tokens_at_first_action > threshold."""
