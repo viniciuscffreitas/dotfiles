@@ -25,7 +25,7 @@ import os as _os
 if _os.environ.get("PAPERWEIGHT_RUN_ID"):
     sys.exit(0)
 
-from _util import get_session_id, get_state_dir
+from _util import get_session_id, get_state_dir, read_oversight_level
 from judge.evaluator import HarnessJudge, JudgePayload
 from judge.router import JudgeRouter
 
@@ -133,14 +133,7 @@ def run(state_dir: Path) -> int:
     state_dir = Path(state_dir)
 
     # Read oversight_level — default to "strict" when profile absent (fail-safe)
-    risk_path = state_dir / "risk-profile.json"
-    oversight_level = "strict"
-    if risk_path.exists():
-        try:
-            risk = json.loads(risk_path.read_text())
-            oversight_level = risk.get("oversight_level", "strict")
-        except (json.JSONDecodeError, OSError):
-            pass
+    oversight_level = read_oversight_level(state_dir, default="strict")
 
     router = JudgeRouter()
 

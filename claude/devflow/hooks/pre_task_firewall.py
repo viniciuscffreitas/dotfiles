@@ -17,7 +17,7 @@ _DEVFLOW_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_DEVFLOW_ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from _util import get_session_id, get_state_dir, read_hook_stdin
+from _util import get_session_id, get_state_dir, read_hook_stdin, read_oversight_level
 from agents.firewall import ContextFirewall, FirewallTask
 
 try:
@@ -48,14 +48,7 @@ def run(state_dir: Path, tool_use: dict) -> None:
     state_dir = Path(state_dir)
 
     # 1. Read oversight_level from risk-profile.json
-    oversight_level = "standard"
-    risk_path = state_dir / "risk-profile.json"
-    if risk_path.exists():
-        try:
-            risk = json.loads(risk_path.read_text())
-            oversight_level = risk.get("oversight_level", "standard")
-        except (json.JSONDecodeError, OSError):
-            pass
+    oversight_level = read_oversight_level(state_dir, default="standard")
 
     # 2. Skip on vibe
     if oversight_level == "vibe":

@@ -169,6 +169,25 @@ def hook_deny(reason: str) -> str:
     return json.dumps({"permissionDecision": "deny", "reason": reason})
 
 
+def read_oversight_level(state_dir: Path, default: str = "standard") -> str:
+    """Read oversight_level from risk-profile.json with fail-safe defaults.
+
+    Used by hooks that branch on the risk profile (pre_task_firewall,
+    post_task_judge, tdd_enforcer). Centralised so all hooks share the same
+    parsing/error handling. Returns ``default`` when the file is missing,
+    malformed, or lacks the key — callers pick the default that matches their
+    fail-safe direction (e.g., "strict" for verification, "standard" for warnings).
+    """
+    risk_path = state_dir / "risk-profile.json"
+    if not risk_path.exists():
+        return default
+    try:
+        data = json.loads(risk_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return default
+    return data.get("oversight_level", default)
+
+
 def load_devflow_config(project_root: Optional[Path] = None) -> dict:
     """Load devflow config with project-level override.
 

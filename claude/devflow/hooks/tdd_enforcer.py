@@ -1,6 +1,10 @@
 """
 PostToolUse hook (Write|Edit|MultiEdit) — warns about implementation without tests.
 Non-blocking: never blocks, only advises with suggested test path.
+
+Bypasses the warning when risk-profile.json reports oversight_level == "vibe"
+(low probability/impact/detectability across the board). Aligned with Opus 4.7's
+"respond quickly when a step doesn't benefit from extra ceremony" principle.
 """
 from __future__ import annotations
 
@@ -8,7 +12,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _util import GENERATED_PATTERNS, SKIP_DIRS, get_edited_file, hook_context, read_hook_stdin
+from _util import (
+    GENERATED_PATTERNS,
+    SKIP_DIRS,
+    get_edited_file,
+    get_state_dir,
+    hook_context,
+    read_hook_stdin,
+    read_oversight_level,
+)
 
 _TEST_PATTERNS = {
     "test_", "_test.", ".test.", "_spec.", ".spec.",
@@ -113,8 +125,22 @@ def find_test_file(impl_path: Path, max_depth: int = 5) -> bool:
     return False
 
 
+def _should_bypass(state_dir: Path) -> bool:
+    """Skip the TDD warning when risk profiler classified the task as vibe-level.
+
+    Vibe = low probability AND low impact AND low detectability — the only oversight
+    band where adding TDD ceremony costs more than it buys. Default "standard" is the
+    fail-safe direction: any error (missing file, malformed JSON, missing key) keeps
+    the warning firing.
+    """
+    return read_oversight_level(state_dir, default="standard") == "vibe"
+
+
 def main() -> int:
     try:
+        if _should_bypass(get_state_dir()):
+            return 0
+
         hook_data = read_hook_stdin()
         file_path = get_edited_file(hook_data)
 

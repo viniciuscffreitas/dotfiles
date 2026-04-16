@@ -30,6 +30,17 @@ Skip /spec only for trivial 1-2 line changes.
 - Escalate to `max` only for genuinely hard problems
 - Opus 4.7 uses adaptive thinking (no fixed budget): prompt "think step-by-step" for more, "respond quickly" for less
 
+### Auto Mode (Shift+Tab)
+- Use for long-running tasks with complete upfront context (multi-file refactors, full-service review, /spec execution after APPROVE)
+- Skip for exploratory work, ambiguous bugfixes, or tasks with `oversight_level: human_review`
+- Does NOT bypass Frontend Gate, Review Gate, TDD cycle, or `devflow-wizard`
+- See `devflow-auto-mode` skill for full guidance (when to enable, anti-patterns, interaction with gates)
+
+### TDD Reminder Bypass
+- `tdd_enforcer` hook silences the "implementation without test" reminder when `risk-profile.json` reports `oversight_level == "vibe"` (low probability AND low impact AND low detectability)
+- The TDD discipline itself still applies — only the per-edit reminder is suppressed for genuinely trivial changes
+- Fail-safe: missing/malformed risk-profile.json keeps the reminder firing
+
 ### Code Quality
 - File length limits configurable via `devflow-config.json` (global: `~/.claude/devflow/`, project: `.devflow-config.json`)
 - Default: >400 lines warning, >600 lines mandatory split
