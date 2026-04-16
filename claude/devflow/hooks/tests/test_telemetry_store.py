@@ -48,6 +48,8 @@ def test_schema_has_required_columns(tmp_path):
         "firewall_delegated", "firewall_task_id", "firewall_success", "firewall_duration_ms",
         "instincts_captured_count", "cost_usd",
         "session_id", "context_anxiety_score",
+        "model",
+        "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
     }
     assert required == cols
 
