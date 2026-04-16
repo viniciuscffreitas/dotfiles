@@ -42,16 +42,19 @@ def _write_pending(session_id: str, description: str, *, state_root: Path = STAT
 
 
 def main() -> int:
-    hook_data = read_hook_stdin()
-    prompt = hook_data.get("prompt", "")
+    try:
+        hook_data = read_hook_stdin()
+        prompt = hook_data.get("prompt", "")
 
-    if "/spec" not in prompt:
-        return 0
+        if "/spec" not in prompt:
+            return 0
 
-    session_id = hook_data.get("session_id") or get_session_id()
-    description = _extract_spec_description(prompt)
-    _write_pending(session_id, description, state_root=STATE_ROOT)
-    print(f"[devflow:spec] PENDING — {description!r}", file=sys.stderr)
+        session_id = hook_data.get("session_id") or get_session_id()
+        description = _extract_spec_description(prompt)
+        _write_pending(session_id, description, state_root=STATE_ROOT)
+        print(f"[devflow:spec] PENDING — {description!r}", file=sys.stderr)
+    except Exception:
+        pass
     return 0
 
 

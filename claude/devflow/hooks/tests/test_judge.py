@@ -423,7 +423,8 @@ class TestPostTaskJudgeHook:
         with patch.object(m, "_get_diff", return_value="diff content"), \
              patch("post_task_judge.HarnessJudge") as mock_judge_cls, \
              patch("post_task_judge.JudgeRouter") as mock_router_cls, \
-             patch("post_task_judge.get_session_id", return_value="test-session-123"):
+             patch("post_task_judge.get_session_id", return_value="test-session-123"), \
+             patch("post_task_judge._is_already_judged", return_value=False):
             mock_judge = MagicMock()
             mock_judge.evaluate.return_value = _make_result("pass", "test-session-123")
             mock_judge_cls.return_value = mock_judge
@@ -443,7 +444,8 @@ class TestPostTaskJudgeHook:
         with patch.object(m, "_get_diff", return_value=""), \
              patch("post_task_judge.HarnessJudge") as mock_judge_cls, \
              patch("post_task_judge.JudgeRouter") as mock_router_cls, \
-             patch("post_task_judge.TelemetryStore", return_value=mock_store):
+             patch("post_task_judge.TelemetryStore", return_value=mock_store), \
+             patch("post_task_judge._is_already_judged", return_value=False):
             mock_judge = MagicMock()
             mock_judge.evaluate.return_value = _make_result("warn")
             mock_judge_cls.return_value = mock_judge
@@ -461,7 +463,8 @@ class TestPostTaskJudgeHook:
         # No risk-profile.json written
         with patch.object(m, "_get_diff", return_value=""), \
              patch("post_task_judge.HarnessJudge") as mock_judge_cls, \
-             patch("post_task_judge.JudgeRouter") as mock_router_cls:
+             patch("post_task_judge.JudgeRouter") as mock_router_cls, \
+             patch("post_task_judge._is_already_judged", return_value=False):
             mock_judge = MagicMock()
             mock_judge.evaluate.return_value = _make_result("pass")
             mock_judge_cls.return_value = mock_judge
@@ -471,4 +474,5 @@ class TestPostTaskJudgeHook:
             mock_router_cls.return_value = mock_router
             code = m.run(tmp_path)
         assert code == 0
-        mock_router.should_run.assert_called_once_with("standard")
+        # Default when no risk-profile.json exists is "strict" (fail-safe)
+        mock_router.should_run.assert_called_once_with("strict")

@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pre_compact import _find_active_spec
+from pre_compact import _find_active_spec, main as compact_main
 from post_compact_restore import main as restore_main
 
 
@@ -154,3 +154,57 @@ def test_restore_corrupt_json(tmp_path, capsys):
         code = restore_main()
     assert code == 0
     assert capsys.readouterr().out == ""
+
+
+# --- pre_compact: compaction_count.json ---
+
+def test_main_creates_compaction_count_on_first_compact(tmp_path):
+    """First PreCompact creates compaction_count.json with count=1."""
+    state_dir = tmp_path / "state" / "s1"
+    state_dir.mkdir(parents=True)
+    with (
+        patch("pre_compact.get_state_dir", return_value=state_dir),
+        patch("pre_compact.get_session_id", return_value="s1"),
+        patch("pre_compact.read_hook_stdin", return_value={"trigger": "auto"}),
+        patch("pre_compact._load_project_profile", return_value=None),
+        patch("pre_compact._find_active_spec", return_value=None),
+    ):
+        rc = compact_main()
+    assert rc == 0
+    count_file = state_dir / "compaction_count.json"
+    assert count_file.exists()
+    assert json.loads(count_file.read_text())["count"] == 1
+
+
+def test_main_increments_existing_compaction_count(tmp_path):
+    """Second PreCompact increments count from 1 to 2."""
+    state_dir = tmp_path / "state" / "s2"
+    state_dir.mkdir(parents=True)
+    (state_dir / "compaction_count.json").write_text(json.dumps({"count": 1}))
+    with (
+        patch("pre_compact.get_state_dir", return_value=state_dir),
+        patch("pre_compact.get_session_id", return_value="s2"),
+        patch("pre_compact.read_hook_stdin", return_value={"trigger": "auto"}),
+        patch("pre_compact._load_project_profile", return_value=None),
+        patch("pre_compact._find_active_spec", return_value=None),
+    ):
+        rc = compact_main()
+    assert rc == 0
+    assert json.loads((state_dir / "compaction_count.json").read_text())["count"] == 2
+
+
+def test_main_compaction_count_survives_corrupt_count_file(tmp_path):
+    """Corrupt compaction_count.json is treated as 0 — count resets to 1."""
+    state_dir = tmp_path / "state" / "s3"
+    state_dir.mkdir(parents=True)
+    (state_dir / "compaction_count.json").write_text("{bad json!")
+    with (
+        patch("pre_compact.get_state_dir", return_value=state_dir),
+        patch("pre_compact.get_session_id", return_value="s3"),
+        patch("pre_compact.read_hook_stdin", return_value={"trigger": "auto"}),
+        patch("pre_compact._load_project_profile", return_value=None),
+        patch("pre_compact._find_active_spec", return_value=None),
+    ):
+        rc = compact_main()
+    assert rc == 0
+    assert json.loads((state_dir / "compaction_count.json").read_text())["count"] == 1

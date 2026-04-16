@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,68 +58,111 @@ def _find_session_jsonl(session_id: str, cwd: str) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+_JSONL_LINE_LIMIT = 2000  # max lines to parse — avoids O(n) on huge sessions
+
+
+def _tail_file_lines(path: Path, n: int) -> list[str]:
+    """Read last N lines without loading the entire file into memory."""
+    chunk = 16384
+    lines: list[str] = []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            remaining = f.tell()
+            buf = b""
+            while remaining > 0 and len(lines) < n:
+                read_size = min(chunk, remaining)
+                remaining -= read_size
+                f.seek(remaining)
+                buf = f.read(read_size) + buf
+                lines = buf.decode("utf-8", errors="ignore").splitlines()
+        return lines[-n:]
+    except Exception:
+        return []
+
+
 def _parse_transcript(jsonl_path: Path, n_messages: int) -> tuple[int, list[str]]:
     """
-    Parse session JSONL.
+    Parse session JSONL — reads only the last _JSONL_LINE_LIMIT lines.
     Returns (tool_use_count, last_n_assistant_text_messages).
     """
     tool_use_count = 0
     assistant_texts: list[str] = []
 
-    with open(jsonl_path, encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    for line in _tail_file_lines(jsonl_path, _JSONL_LINE_LIMIT):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
 
-            if entry.get("type") != "assistant":
-                continue
+        if entry.get("type") != "assistant":
+            continue
 
-            content = entry.get("message", {}).get("content", [])
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("type") == "tool_use":
-                    tool_use_count += 1
-                elif item.get("type") == "text":
-                    text = item.get("text", "").strip()
-                    if text:
-                        assistant_texts.append(text)
+        content = entry.get("message", {}).get("content", [])
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "tool_use":
+                tool_use_count += 1
+            elif item.get("type") == "text":
+                text = item.get("text", "").strip()
+                if text:
+                    assistant_texts.append(text)
 
     return tool_use_count, assistant_texts[-n_messages:]
 
 
+_HAIKU_TIMEOUT = 30
+_HAIKU_MAX_RETRIES = 2
+_HAIKU_RETRY_DELAY = 5  # seconds between retries
+
+
 def _call_haiku(transcript_text: str) -> list[dict]:
     """
-    Calls `claude -p` with Haiku model.
-    Returns parsed JSON list or raises on failure.
+    Calls `claude -p` with Haiku model. Retries once with backoff on timeout.
+
+    Without retry, a transient 30s timeout causes instinct_capture to silently
+    drop all learning from a session. Two attempts cover 95%+ of cold-start cases.
     """
     prompt = f"{_EXTRACT_PROMPT}\n\nSession transcript:\n{transcript_text}"
-    result = subprocess.run(
-        ["claude", "-p", prompt, "--model", _HAIKU_MODEL],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        raise subprocess.SubprocessError(
-            f"claude exit {result.returncode}: {result.stderr[:200]}"
-        )
-    raw = result.stdout.strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        raw = "\n".join(lines[1:])
-        if raw.endswith("```"):
-            raw = raw[:-3].strip()
-    return json.loads(raw)
+    cmd = ["claude", "-p", prompt, "--model", _HAIKU_MODEL]
+    last_exc: Exception = subprocess.SubprocessError("no attempts made")
+
+    for attempt in range(_HAIKU_MAX_RETRIES):
+        if attempt > 0:
+            time.sleep(_HAIKU_RETRY_DELAY)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=_HAIKU_TIMEOUT,
+                env={**os.environ, "DEVFLOW_JUDGE_SUBPROCESS": "1"},
+            )
+        except subprocess.TimeoutExpired as exc:
+            last_exc = subprocess.SubprocessError(f"timeout after {_HAIKU_TIMEOUT}s (attempt {attempt + 1})")
+            continue
+        if result.returncode != 0:
+            raise subprocess.SubprocessError(
+                f"claude exit {result.returncode}: {result.stderr[:200]}"
+            )
+        raw = result.stdout.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:])
+            if raw.endswith("```"):
+                raw = raw[:-3].strip()
+        return json.loads(raw)
+
+    raise last_exc
 
 
 def main() -> int:
+    # Skip condition 0: running inside a judge/instinct subprocess — prevents re-entrant loops
+    if os.environ.get("DEVFLOW_JUDGE_SUBPROCESS") == "1":
+        print("[devflow:instinct] skipped (subprocess guard)", file=sys.stderr)
+        return 0
+
     # Skip condition 1: env var override
     if os.environ.get("DEVFLOW_INSTINCT_SKIP", "").strip() == "1":
         return 0

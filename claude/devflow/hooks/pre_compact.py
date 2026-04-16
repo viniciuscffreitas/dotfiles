@@ -38,25 +38,40 @@ def _load_project_profile() -> dict | None:
 
 
 def main() -> int:
-    hook_data = read_hook_stdin()
-    state_dir = get_state_dir()
-
-    state = {
-        "session_id": get_session_id(),
-        "trigger": hook_data.get("trigger", "auto"),
-        "active_spec": _find_active_spec(),
-        "cwd": os.getcwd(),
-        "project_profile": _load_project_profile(),
-    }
-
-    state_file = state_dir / "pre-compact.json"
     try:
-        state_file.write_text(json.dumps(state, indent=2))
-    except OSError as e:
-        print(f"[devflow] ERROR: could not save pre-compact state: {e}", file=sys.stderr)
-        return 1
+        hook_data = read_hook_stdin()
+        state_dir = get_state_dir()
 
-    print("[devflow] State saved before compaction", file=sys.stderr)
+        # Save full pre-compact state (used by post_compact_restore)
+        state = {
+            "session_id": get_session_id(),
+            "trigger": hook_data.get("trigger", "auto"),
+            "active_spec": _find_active_spec(),
+            "cwd": os.getcwd(),
+            "project_profile": _load_project_profile(),
+        }
+        state_file = state_dir / "pre-compact.json"
+        try:
+            state_file.write_text(json.dumps(state, indent=2))
+        except OSError as e:
+            print(f"[devflow] ERROR: could not save pre-compact state: {e}", file=sys.stderr)
+
+        # Increment per-session compaction counter (read by task_telemetry at session end)
+        count_file = state_dir / "compaction_count.json"
+        count = 0
+        try:
+            if count_file.exists():
+                count = json.loads(count_file.read_text()).get("count", 0)
+        except (OSError, json.JSONDecodeError):
+            count = 0  # corrupt file — start fresh
+        try:
+            count_file.write_text(json.dumps({"count": count + 1}))
+        except OSError:
+            pass  # counter loss is non-fatal
+
+        print("[devflow] State saved before compaction", file=sys.stderr)
+    except Exception:
+        pass
     return 0
 
 

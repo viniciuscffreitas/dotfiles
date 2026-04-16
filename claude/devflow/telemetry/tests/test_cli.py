@@ -58,6 +58,16 @@ class TestCmdStats:
         assert result.returncode == 0
         assert "Total tasks:" in result.stdout
 
+    def test_stats_contains_avg_estimated_usd(self, tmp_path):
+        db = tmp_path / "usd.db"
+        _seed_db(db, [
+            {"task_id": "s1", "estimated_usd": 0.042},
+            {"task_id": "s2", "estimated_usd": 0.018},
+        ])
+        result = run_cli("stats", env_db=db)
+        assert result.returncode == 0
+        assert "Avg estimated USD:" in result.stdout
+
 
 # ---------------------------------------------------------------------------
 # cmd_recent

@@ -10,8 +10,11 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Optional
+
+_PROFILE_CACHE_TTL = 60  # seconds — skip re-detection if profile is this fresh
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _util import ToolchainKind, detect_toolchain, get_state_dir, load_devflow_config
@@ -145,9 +148,9 @@ def detect_design_system(project_root: Path) -> Optional[str]:
         for match in project_root.glob(pattern):
             if match.is_dir():
                 try:
-                    return str(match.relative_to(project_root))
+                    return match.relative_to(project_root).as_posix()
                 except ValueError:
-                    return str(match)
+                    return match.as_posix()
     return None
 
 
@@ -176,6 +179,26 @@ def detect_test_framework(
                         return fw
             except (json.JSONDecodeError, OSError):
                 pass
+    if toolchain == ToolchainKind.PYTHON:
+        if (project_root / "pytest.ini").exists():
+            return "pytest"
+        setup_cfg = project_root / "setup.cfg"
+        if setup_cfg.exists():
+            try:
+                if "[tool:pytest]" in setup_cfg.read_text():
+                    return "pytest"
+            except OSError:
+                pass
+        pyproject = project_root / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                text = pyproject.read_text()
+                if "[tool.pytest.ini_options]" in text or '"pytest"' in text or "'pytest'" in text:
+                    return "pytest"
+            except OSError:
+                pass
+        if (project_root / "tests").is_dir() or (project_root / "test").is_dir():
+            return "pytest"
     return "unknown"
 
 
@@ -239,67 +262,24 @@ def _count_all_learned_skills() -> list[str]:
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> int:
-    cwd = Path.cwd()
-    project_root = find_project_root(cwd)
-    settings = _load_settings()
-
-    toolchain, _ = detect_toolchain(project_root)
-    in_project = (project_root != cwd) or any(
-        (cwd / marker).exists()
-        for marker in [".git", "package.json", "pubspec.yaml", "Cargo.toml", "go.mod", "pom.xml"]
-    )
-    config = load_devflow_config(project_root)
-
-    issue_tracker = detect_issue_tracker(project_root, settings, config)
-    design_system = detect_design_system(project_root)
-    test_framework = detect_test_framework(project_root, toolchain)
-
-    _ensure_learned_skills_dir()
-    injected = _manage_symlinks(project_root, cwd, toolchain, config)
-
-    tf_label = test_framework if in_project else "none"
-    all_learned = _count_all_learned_skills()
-
-    profile = {
-        "project_root": str(project_root),
-        "toolchain": toolchain.name if toolchain else (None if not in_project else "unknown"),
-        "issue_tracker": issue_tracker,
-        "design_system": design_system,
-        "test_framework": tf_label,
-        "injected_skills": injected,
-        "all_learned_skills": all_learned,
-        "in_project": in_project,
-    }
-
-    state_dir = get_state_dir()
-    marker = state_dir / "discovery-ran"
-
-    # Always remove stale marker first — if we crash before the end,
-    # post_compact_restore will correctly inject the profile as fallback.
-    try:
-        marker.unlink(missing_ok=True)
-    except OSError:
-        pass
-
-    try:
-        (state_dir / "project-profile.json").write_text(
-            json.dumps(profile, indent=2),
-        )
-        marker.write_text("")
-    except OSError:
-        pass
+def _print_profile(profile: dict) -> None:
+    """Print project profile context lines from a cached or freshly-built profile."""
+    issue_tracker = profile.get("issue_tracker", "none")
+    design_system = profile.get("design_system")
+    tf_label = profile.get("test_framework", "unknown")
+    toolchain_raw = profile.get("toolchain")
+    in_project = profile.get("in_project", True)
+    all_learned = profile.get("all_learned_skills", [])
 
     lines = ["[devflow:project-profile]"]
     lines.append(f"ISSUE_TRACKER_TYPE={issue_tracker}")
     if design_system:
         lines.append(f"DESIGN_SYSTEM_ROOT={design_system}")
     lines.append(f"TEST_FRAMEWORK={tf_label}")
-    tc_label = toolchain.name if toolchain else ("none" if not in_project else "unknown")
+    tc_label = toolchain_raw if toolchain_raw else ("none" if not in_project else "unknown")
     lines.append(f"TOOLCHAIN={tc_label}")
     if not in_project:
         lines.append("PROJECT=none (not in a project directory)")
-
     if all_learned:
         lines.append(f"LEARNED_SKILLS={','.join(all_learned)}")
     else:
@@ -308,6 +288,74 @@ def main() -> int:
     lines.append(f"AST_GREP={_detect_ast_grep()}")
 
     print("\n".join(lines))
+
+
+def main() -> int:
+    try:
+        state_dir = get_state_dir()
+        profile_path = state_dir / "project-profile.json"
+
+        # Cache hit: profile written < TTL seconds ago → skip expensive globs/detection
+        if profile_path.exists():
+            try:
+                age = time.time() - profile_path.stat().st_mtime
+                if age < _PROFILE_CACHE_TTL:
+                    cached = json.loads(profile_path.read_text())
+                    _print_profile(cached)
+                    return 0
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        cwd = Path.cwd()
+        project_root = find_project_root(cwd)
+        settings = _load_settings()
+
+        toolchain, _ = detect_toolchain(project_root)
+        in_project = (project_root != cwd) or any(
+            (cwd / marker).exists()
+            for marker in [".git", "package.json", "pubspec.yaml", "Cargo.toml", "go.mod", "pom.xml"]
+        )
+        config = load_devflow_config(project_root)
+
+        issue_tracker = detect_issue_tracker(project_root, settings, config)
+        design_system = detect_design_system(project_root)
+        test_framework = detect_test_framework(project_root, toolchain)
+
+        _ensure_learned_skills_dir()
+        injected = _manage_symlinks(project_root, cwd, toolchain, config)
+
+        tf_label = test_framework if in_project else "none"
+        all_learned = _count_all_learned_skills()
+
+        profile = {
+            "project_root": str(project_root),
+            "toolchain": toolchain.name if toolchain else (None if not in_project else "unknown"),
+            "issue_tracker": issue_tracker,
+            "design_system": design_system,
+            "test_framework": tf_label,
+            "injected_skills": injected,
+            "all_learned_skills": all_learned,
+            "in_project": in_project,
+        }
+
+        marker = state_dir / "discovery-ran"
+
+        # Always remove stale marker first — if we crash before the end,
+        # post_compact_restore will correctly inject the profile as fallback.
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+        try:
+            profile_path.write_text(json.dumps(profile, indent=2))
+            marker.write_text("")
+        except OSError:
+            pass
+
+        _print_profile(profile)
+    except Exception:
+        pass
     return 0
 
 

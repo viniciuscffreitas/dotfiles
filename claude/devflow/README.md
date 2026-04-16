@@ -7,7 +7,7 @@
 *Automatic quality hooks, TDD enforcement, spec-driven workflows, risk-aware execution, and self-evaluating telemetry — for every project, without configuration.*
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-793-brightgreen.svg)](#running-tests)
+[![Tests](https://img.shields.io/badge/tests-951-brightgreen.svg)](#running-tests)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-orange.svg)](https://claude.ai/code)
 
@@ -102,7 +102,7 @@ Same model. Same prompts. Completely different results.
 
 When the agent gets a self-contained slice — domain entity, use case, interface, and test all colocated — it gets it right on the first attempt. When it enters a layered codebase where the same concern is scattered across folders, it burns tokens reconstructing context before it can act. And the more tokens it burns before acting, the higher the error rate.
 
-The context window is nominally 200k tokens. Effective limit is ~167k. Research shows model accuracy drops around 32k tokens regardless of window size — instructions buried in the middle get less attention than those at the start and end. This isn't a model limitation to wait out. It's a constraint to design for.
+Since March 2026, Opus 4.6 and Sonnet 4.6 have a 1M token context window on Max/Team/Enterprise plans. But research shows model accuracy drops around 32k tokens regardless of window size — instructions buried in the middle get less attention than those at the start and end. A 1M window doesn't solve the problem; it just moves the ceiling. This isn't a model limitation to wait out. It's a constraint to design for.
 
 **The architectural implication nobody states clearly:**
 
@@ -134,8 +134,10 @@ These fire on every relevant Claude Code event. You never invoke them — they j
 | **discovery_scan** | SessionStart | Detects project structure: toolchain (Node.js, Flutter, Go, Rust, Maven, Python), issue tracker (Linear, GitHub Issues, Jira, TODO.md), design system, test framework. Manages learned skill symlinks. Outputs `[devflow:project-profile]` to context |
 | **file_checker** | PostToolUse (Write\|Edit\|MultiEdit) | Runs the right formatter + linter for your toolchain. Warns at 400 lines, alerts at 600. Applies structural [sg rules](docs/sg-rules.md) when `ast-grep` is installed. Skips test files, config files, and generated code (`.g.dart`, `.freezed.dart`, `.pb.go`, etc.) |
 | **tdd_enforcer** | PostToolUse (Write\|Edit\|MultiEdit) | Detects implementation without a corresponding test. Suggests the exact test path using language-aware directory mirroring. Non-blocking — advises, never blocks |
-| **context_monitor** | PostToolUse (broad) | Tracks context usage against the compaction threshold (~167k tokens). Warns at 80%, cautions at 90% |
+| **context_monitor** | PostToolUse (broad) | Tracks context usage. Reads actual window size from hook payload (1M for Opus/Sonnet 4.6 on Max plan); falls back to 200k. Warns at 80%, cautions at 90% |
 | **pre_push_gate** | PreToolUse (Bash) | Intercepts `git push`, runs 4 deterministic linters + language-specific quality gate (pytest/mypy for Python, flutter analyze, go vet, etc.). Blocks the push if any check fails |
+| **secrets_detector** | PreToolUse (Write\|Edit\|MultiEdit) | Scans content for credentials. HIGH (OpenAI/Anthropic/GitHub/AWS keys, private key headers) blocks the write. MEDIUM (password/secret variable assignments) warns without blocking. Skips `.example`/`.template` files |
+| **commit_validator** | PreToolUse (Bash) | Intercepts `git commit -m`, validates Conventional Commits format (`type(scope): description`). Non-blocking advisory. Skips `--amend`, `--no-edit`, and merge commits |
 
 #### Session continuity
 
@@ -180,7 +182,7 @@ Every `/spec` cycle passes through two phases:
 | `IMPLEMENTING` | First `Write`/`Edit` to a source file after PENDING |
 | `COMPLETED` | Last successful test-runner result after IMPLEMENTING |
 
-All data lands in a SQLite store (`~/.claude/devflow/telemetry/devflow.db`) with 39 columns including risk scores, judge verdicts, anxiety scores, skills loaded, and hook execution data — alongside the legacy `sessions.jsonl` for backwards compatibility.
+All data lands in a SQLite store (`~/.claude/devflow/telemetry/devflow.db`) with 42 columns including risk scores, judge verdicts, anxiety scores, skills loaded, and hook execution data — alongside the legacy `sessions.jsonl` for backwards compatibility.
 
 ```bash
 python3 ~/.claude/devflow/telemetry/cli.py stats
@@ -250,7 +252,7 @@ Behavior Contract (CHANGES / MUST NOT CHANGE / PROOF) → Approve → TDD → Ve
 
 #### `/sync`
 
-Scans the project and discovers its conventions: stack, naming patterns, test framework, key dependencies.
+Re-runs `discovery_scan.py` and displays the updated project profile (toolchain, test framework, issue tracker, injected learned skills). Deterministic — runs shell commands, no LLM guessing.
 
 #### `/learn`
 
@@ -372,7 +374,7 @@ cp ~/.claude/devflow/CLAUDE.md ~/.claude/CLAUDE.md
 
 ```bash
 cd ~/.claude/devflow && python3.13 -m pytest hooks/tests/ -q
-# 793 tests should pass
+# 951 tests should pass
 ```
 
 ### Uninstall
@@ -410,10 +412,13 @@ chmod +x ~/.claude/devflow/uninstall.sh && ~/.claude/devflow/uninstall.sh
     │   ├── spec_stop_guard.py         ← block exit mid-spec
     │   ├── spec_phase_tracker.py      ← deterministic PENDING detection
     │   ├── pre_push_gate.py           ← 4 linters + quality gate
+    │   ├── secrets_detector.py        ← credential leak prevention (HIGH=block, MEDIUM=warn)
+    │   ├── commit_validator.py        ← Conventional Commits validation (non-blocking)
     │   ├── pre_task_profiler.py       ← risk scoring before each task
     │   ├── pre_task_firewall.py       ← subprocess isolation for read-only tasks
-    │   ├── task_telemetry.py          ← token cost per phase → SQLite
+    │   ├── task_telemetry.py          ← token cost per phase → SQLite + USD estimate + anxiety alert
     │   ├── post_task_judge.py         ← LLM evaluation of task output
+    │   ├── sync_report.py             ← CLI: display project-profile.json after /sync
     │   ├── anxiety_report.py          ← CLI: over-investigation detector
     │   ├── health_report.py           ← CLI: harness health monitor
     │   ├── weekly_intelligence.py     ← CLI: weekly recommendations
@@ -425,9 +430,9 @@ chmod +x ~/.claude/devflow/uninstall.sh && ~/.claude/devflow/uninstall.sh
     │   ├── cwd_changed.py             ← CWDChanged — toolchain detection on directory switch
     │   ├── config_reload.py           ← ConfigChange — notify on settings.json changes
     │   ├── telemetry_report.py        ← CLI: token cost per phase per project
-    │   └── tests/                     ← 793 tests
+│   └── tests/                     ← 951 tests
     ├── telemetry/
-    │   ├── store.py                   ← TelemetryStore: SQLite, 39 columns
+    │   ├── store.py                   ← TelemetryStore: SQLite, 42 columns
     │   ├── migrate_sessions.py        ← one-time migration from sessions.jsonl
     │   ├── cli.py                     ← stats / recent / anxiety commands
     │   └── devflow.db                 ← persistent telemetry (gitignored)
@@ -537,7 +542,7 @@ Each session gets:
 ```bash
 cd ~/.claude/devflow
 
-# All 793 tests
+# All 951 tests
 python3.13 -m pytest hooks/tests/ -q
 
 # Specific module

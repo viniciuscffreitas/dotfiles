@@ -1,7 +1,7 @@
 """File-locked task registry for parallel devflow session coordination.
 
 Storage: ~/.claude/devflow/state/task_registry.json
-Lock:    ~/.claude/devflow/state/task_registry.lock  (exclusive flock)
+Lock:    ~/.claude/devflow/state/task_registry.lock  (exclusive flock / msvcrt)
 
 Multiple Claude Code windows (or test threads) safely claim tasks without
 collision. Tasks older than STALE_THRESHOLD seconds are automatically
@@ -9,13 +9,18 @@ reclaimed so dead sessions don't block work forever.
 """
 from __future__ import annotations
 
-import fcntl
 import json
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator, Optional
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 _DEVFLOW_STATE = Path.home() / ".claude" / "devflow" / "state"
 
@@ -116,25 +121,48 @@ class TaskRegistry:
 
     @contextmanager
     def _lock(self) -> Generator[None, None, None]:
-        """Exclusive flock on a separate .lock file; raises TimeoutError after LOCK_TIMEOUT."""
+        """Exclusive file lock on a separate .lock file; raises TimeoutError after LOCK_TIMEOUT.
+
+        Uses fcntl.flock on Unix and msvcrt.locking on Windows.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = self._path.with_suffix(".lock")
         deadline = time.monotonic() + self.LOCK_TIMEOUT
         with open(lock_path, "w") as lf:
-            while True:
+            if sys.platform == "win32":
+                while True:
+                    try:
+                        msvcrt.locking(lf.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(
+                                f"Registry lock not acquired within {self.LOCK_TIMEOUT}s"
+                            )
+                        time.sleep(0.05)
                 try:
-                    fcntl.flock(lf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(
-                            f"Registry lock not acquired within {self.LOCK_TIMEOUT}s"
-                        )
-                    time.sleep(0.05)
-            try:
-                yield
-            finally:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+                    yield
+                finally:
+                    try:
+                        lf.seek(0)
+                        msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
+                    except OSError:
+                        pass
+            else:
+                while True:
+                    try:
+                        fcntl.flock(lf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(
+                                f"Registry lock not acquired within {self.LOCK_TIMEOUT}s"
+                            )
+                        time.sleep(0.05)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
     def _read(self) -> dict:
         try:

@@ -469,7 +469,7 @@ _CLI = str(Path(__file__).parent.parent / "weekly_intelligence.py")
 
 def _run_cli(*args: str) -> tuple[str, int]:
     result = _subprocess.run(
-        ["python3.13", _CLI, *args],
+        [sys.executable, _CLI, *args],
         capture_output=True,
         text=True,
     )

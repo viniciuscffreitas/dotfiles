@@ -134,6 +134,7 @@ def test_find_project_root_no_marker_returns_start(tmp_path):
     assert result == child
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink creation requires admin on Windows")
 def test_find_project_root_symlinked_root(tmp_path):
     real = tmp_path / "real_project"
     real.mkdir()
@@ -398,6 +399,7 @@ def test_has_docker_no_docker_files(tmp_path):
     assert _has_docker(tmp_path, tmp_path, None) is False
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="iCloud path is macOS-specific")
 def test_has_icloud_when_cwd_is_in_icloud(tmp_path):
     icloud = Path("/Users/vini/Library/Mobile Documents/com~apple~CloudDocs/project")
     assert _has_icloud(tmp_path, icloud, None) is True
@@ -496,6 +498,7 @@ def test_manage_symlinks_auto_inject_disabled_returns_empty(tmp_path):
     assert result == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink creation requires admin on Windows")
 def test_manage_symlinks_injects_skill_when_trigger_matches(tmp_path):
     learned = tmp_path / "learned-skills"
     skills = tmp_path / "skills"
@@ -513,6 +516,7 @@ def test_manage_symlinks_injects_skill_when_trigger_matches(tmp_path):
     assert link.is_symlink()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink creation requires admin on Windows")
 def test_manage_symlinks_removes_stale_link_when_trigger_no_longer_matches(tmp_path):
     learned = tmp_path / "learned-skills"
     skills = tmp_path / "skills"

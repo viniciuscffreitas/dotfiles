@@ -18,7 +18,9 @@ FILE_LINES_CRITICAL = 600
 
 DEVFLOW_CONFIG_GLOBAL = Path.home() / ".claude" / "devflow" / "devflow-config.json"
 
-# Context thresholds — compaction fires at (WINDOW - BUFFER), so effective limit is ~167k tokens
+# Fallback context window — used only when the hook payload omits context_window_tokens.
+# Since March 2026, Opus 4.6 / Sonnet 4.6 have 1M tokens on Max/Team/Enterprise plans.
+# context_monitor._get_window() reads the live value from the event and falls back here.
 CONTEXT_WINDOW_TOKENS = 200_000
 AUTOCOMPACT_BUFFER_TOKENS = 33_000
 CONTEXT_WARN_PCT = 80.0
@@ -96,6 +98,11 @@ def check_file_length(
 
 def read_hook_stdin() -> dict:
     try:
+        from _stdin_cache import get as _stdin_get
+        return _stdin_get()
+    except Exception:
+        pass
+    try:
         content = sys.stdin.read()
         if content.strip():
             return json.loads(content)
@@ -121,7 +128,11 @@ def get_bash_command(hook_data: dict) -> Optional[str]:
 
 
 def get_state_dir() -> Path:
-    state_dir = Path.home() / ".claude" / "devflow" / "state" / get_session_id()
+    from _session import is_safe_session
+    sid = get_session_id()
+    if not is_safe_session():
+        sid = "default"
+    state_dir = Path.home() / ".claude" / "devflow" / "state" / sid
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir
 

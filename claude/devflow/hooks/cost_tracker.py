@@ -111,8 +111,11 @@ def main() -> int:
 
         if TelemetryStore is not None and session_id:
             try:
+                from datetime import datetime, timezone
                 TelemetryStore().record({
                     "task_id": session_id,
+                    "session_id": session_id,
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                     "cost_usd": cost_usd,
                     "model": model,
                     "input_tokens": input_tokens,

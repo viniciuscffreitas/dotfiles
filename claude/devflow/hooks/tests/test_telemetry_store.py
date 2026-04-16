@@ -46,6 +46,7 @@ def test_schema_has_required_columns(tmp_path):
         "probability_score", "impact_score", "detectability_score", "oversight_level",
         "skills_loaded", "rules_triggered", "harness_drift_detected", "task_time_seconds",
         "firewall_delegated", "firewall_task_id", "firewall_success", "firewall_duration_ms",
+        "estimated_usd", "test_retry_count", "tdd_followthrough_rate",
         "instincts_captured_count", "cost_usd",
         "session_id", "context_anxiety_score",
         "model",
@@ -211,3 +212,58 @@ def test_summary_stats_spiral_rate(tmp_path):
     store.record({"task_id": "n2"})  # spiral_detected NULL — not a spiral
     stats = store.summary_stats()
     assert abs(stats["spiral_rate"] - 1 / 3) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# Task 3: new schema columns — estimated_usd, test_retry_count, tdd_followthrough_rate
+# ---------------------------------------------------------------------------
+
+def test_schema_has_estimated_usd_column(tmp_path):
+    TelemetryStore(db_path=tmp_path / "t.db")
+    conn = sqlite3.connect(tmp_path / "t.db")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(task_executions)").fetchall()}
+    conn.close()
+    assert "estimated_usd" in cols
+
+
+def test_schema_has_test_retry_count_column(tmp_path):
+    TelemetryStore(db_path=tmp_path / "t.db")
+    conn = sqlite3.connect(tmp_path / "t.db")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(task_executions)").fetchall()}
+    conn.close()
+    assert "test_retry_count" in cols
+
+
+def test_schema_has_tdd_followthrough_rate_column(tmp_path):
+    TelemetryStore(db_path=tmp_path / "t.db")
+    conn = sqlite3.connect(tmp_path / "t.db")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(task_executions)").fetchall()}
+    conn.close()
+    assert "tdd_followthrough_rate" in cols
+
+
+def test_migration_adds_new_columns_to_existing_db(tmp_path):
+    """An existing DB without the new columns gets them added via migration."""
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE task_executions (task_id TEXT PRIMARY KEY, stack TEXT)")
+    conn.commit()
+    conn.close()
+    TelemetryStore(db_path=db)
+    conn = sqlite3.connect(db)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(task_executions)").fetchall()}
+    conn.close()
+    assert "estimated_usd" in cols
+    assert "test_retry_count" in cols
+    assert "tdd_followthrough_rate" in cols
+
+
+def test_record_stores_estimated_usd(tmp_path):
+    store = TelemetryStore(db_path=tmp_path / "t.db")
+    store.record({"task_id": "usd-1", "estimated_usd": 0.042})
+    conn = sqlite3.connect(tmp_path / "t.db")
+    row = conn.execute(
+        "SELECT estimated_usd FROM task_executions WHERE task_id = 'usd-1'"
+    ).fetchone()
+    conn.close()
+    assert abs(row[0] - 0.042) < 1e-6

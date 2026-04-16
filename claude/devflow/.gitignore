@@ -5,4 +5,5 @@ state/
 telemetry/devflow.db
 telemetry/secrets_blocked.log
 telemetry/sessions.jsonl
+telemetry/boundary_worker.log
 instincts/

@@ -240,7 +240,7 @@ _CAPTURE_SCRIPT = str(Path(__file__).parent.parent / "instinct_capture.py")
 
 def test_capture_skips_when_instinct_skip_env_set():
     result = _sp.run(
-        ["python3.13", _CAPTURE_SCRIPT],
+        [sys.executable, _CAPTURE_SCRIPT],
         env={**os.environ, "DEVFLOW_INSTINCT_SKIP": "1"},
         input="{}",
         capture_output=True,
@@ -253,7 +253,7 @@ def test_capture_skips_when_instinct_skip_env_set():
 def test_capture_skips_when_project_is_devflow():
     hook_data = json.dumps({"session_id": "sess-001", "cwd": "/Users/vini/.claude/devflow"})
     result = _sp.run(
-        ["python3.13", _CAPTURE_SCRIPT],
+        [sys.executable, _CAPTURE_SCRIPT],
         input=hook_data,
         capture_output=True,
         text=True,
@@ -264,7 +264,7 @@ def test_capture_skips_when_project_is_devflow():
 
 def test_capture_always_exits_0_with_skip():
     result = _sp.run(
-        ["python3.13", _CAPTURE_SCRIPT],
+        [sys.executable, _CAPTURE_SCRIPT],
         env={**os.environ, "DEVFLOW_INSTINCT_SKIP": "1"},
         input="{}",
         capture_output=True,
@@ -481,7 +481,7 @@ _REVIEW_CLI = str(Path(__file__).parent.parent / "instinct_review.py")
 
 def _run_review(*args: str, input_text: str = "") -> tuple[str, int]:
     result = _sprev.run(
-        ["python3.13", _REVIEW_CLI, *args],
+        [sys.executable, _REVIEW_CLI, *args],
         capture_output=True,
         text=True,
         input=input_text,
@@ -742,13 +742,13 @@ def test_review_interactive_no_tty_prints_warning_and_skips(tmp_path, capsys):
 
 def test_review_smart_path_momease():
     from instinct_review import _suggest_rules_path
-    path = _suggest_rules_path("momease")
+    path = _suggest_rules_path("momease").replace("\\", "/")
     assert path.endswith("rules/momease/conventions.md")
 
 
 def test_review_smart_path_devflow():
     from instinct_review import _suggest_rules_path
-    path = _suggest_rules_path("devflow")
+    path = _suggest_rules_path("devflow").replace("\\", "/")
     assert path.endswith("rules/devflow/conventions.md")
 
 

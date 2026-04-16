@@ -25,11 +25,31 @@ def _read_input() -> dict:
         return {}
 
 
-def _last_assistant_text(transcript_path: str) -> str:
-    """Return the last assistant message text (truncated), or empty string."""
+def _tail_lines(path: str, n: int = 200) -> list[str]:
+    """Read last N lines without loading the entire file into memory."""
+    chunk = 8192
+    lines: list[str] = []
     try:
-        lines = open(transcript_path).readlines()
-        for line in reversed(lines):
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            remaining = f.tell()
+            buf = b""
+            while remaining > 0 and len(lines) < n:
+                read_size = min(chunk, remaining)
+                remaining -= read_size
+                f.seek(remaining)
+                buf = f.read(read_size) + buf
+                lines = buf.decode("utf-8", errors="ignore").splitlines()
+        return lines[-n:]
+    except Exception:
+        return []
+
+
+def _last_assistant_text(transcript_path: str) -> str:
+    """Return the last assistant message text (truncated), or empty string.
+    Reads only the tail of the file to avoid loading large transcripts."""
+    try:
+        for line in reversed(_tail_lines(transcript_path, n=200)):
             try:
                 entry = json.loads(line)
             except Exception:
@@ -52,7 +72,7 @@ def _last_assistant_text(transcript_path: str) -> str:
 
 
 def _notify(title: str, subtitle: str) -> None:
-    subtitle_escaped = subtitle.replace('"', '\\"').replace("\\", "\\\\")
+    subtitle_escaped = subtitle.replace("\\", "\\\\").replace('"', '\\"')
     script = f'display notification "{subtitle_escaped}" with title "{title}"'
     subprocess.run(
         ["osascript", "-e", script],

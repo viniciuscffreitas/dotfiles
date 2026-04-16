@@ -20,9 +20,15 @@ Skip /spec only for trivial 1-2 line changes.
 3. Complete test suite
 
 ### Model Routing
-- `claude-opus-4-6` -> planning, design, complex trade-offs
+- `claude-opus-4-7` -> planning, design, complex trade-offs (default Opus tier)
+- `claude-opus-4-6` -> legacy Opus; only when Fast mode latency is required
 - `claude-sonnet-4-6` -> implementation, refactoring, debugging (default)
 - `claude-haiku-4-5-20251001` -> search, formatting, simple transformations
+
+### Effort Level (Opus 4.7)
+- Default: `xhigh` — best setting for most coding/agentic uses
+- Escalate to `max` only for genuinely hard problems
+- Opus 4.7 uses adaptive thinking (no fixed budget): prompt "think step-by-step" for more, "respond quickly" for less
 
 ### Code Quality
 - File length limits configurable via `devflow-config.json` (global: `~/.claude/devflow/`, project: `.devflow-config.json`)

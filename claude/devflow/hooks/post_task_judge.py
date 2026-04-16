@@ -8,6 +8,7 @@ updates TelemetryStore, and exits with the router's exit code.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,14 @@ from pathlib import Path
 _DEVFLOW_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_DEVFLOW_ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Skip evaluation when running inside a Paperweight subprocess.
+# Paperweight sets PAPERWEIGHT_RUN_ID for all claude -p calls it dispatches.
+# Without this guard, post_task_judge fires after EVERY pipeline phase
+# instead of once at the end of the complete task.
+import os as _os
+if _os.environ.get("PAPERWEIGHT_RUN_ID"):
+    sys.exit(0)
 
 from _util import get_session_id, get_state_dir
 from judge.evaluator import HarnessJudge, JudgePayload
@@ -98,16 +107,38 @@ def _read_feature_path(state_dir: Path) -> str:
     return "."
 
 
+def _is_already_judged(task_id: str, store=None) -> bool:
+    """Check if this task already has a judge_verdict in TelemetryStore.
+
+    Accepts an optional store to avoid creating a second TelemetryStore()
+    instance when called from run() which already holds one.
+    """
+    if TelemetryStore is None:
+        return False
+    try:
+        from contextlib import closing
+        s = store if store is not None else TelemetryStore()
+        with closing(s._connect()) as conn:
+            conn.execute("PRAGMA busy_timeout = 3000")
+            row = conn.execute(
+                "SELECT judge_verdict FROM task_executions WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+        return row is not None and row["judge_verdict"] is not None
+    except Exception:
+        return False
+
+
 def run(state_dir: Path) -> int:
     state_dir = Path(state_dir)
 
-    # Read oversight_level
+    # Read oversight_level — default to "strict" when profile absent (fail-safe)
     risk_path = state_dir / "risk-profile.json"
-    oversight_level = "standard"
+    oversight_level = "strict"
     if risk_path.exists():
         try:
             risk = json.loads(risk_path.read_text())
-            oversight_level = risk.get("oversight_level", "standard")
+            oversight_level = risk.get("oversight_level", "strict")
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -117,9 +148,23 @@ def run(state_dir: Path) -> int:
         print("[devflow:judge] skipped (vibe)")
         return 0
 
+    task_id = get_session_id()
+
+    # Build store once — reused for both the duplicate check and the verdict write
+    store = None
+    if TelemetryStore is not None:
+        try:
+            store = TelemetryStore()
+        except Exception:
+            pass
+
+    # Double-judging guard: skip if boundary judge already evaluated this task
+    if _is_already_judged(task_id, store=store):
+        print("[devflow:judge] skipped (already judged by boundary judge)")
+        return 0
+
     # Build payload
     diff = _get_diff()
-    task_id = get_session_id()
 
     payload = JudgePayload(
         diff=diff,
@@ -134,17 +179,20 @@ def run(state_dir: Path) -> int:
     judge = HarnessJudge()
     result = judge.evaluate(payload)
 
+    # If judge returned "skipped" (timeout, parse error), record as judge_error
+    verdict = result.verdict
+    if verdict == "skipped":
+        verdict = "judge_error"
+
     # Route
     exit_code = router.handle(oversight_level, result, state_dir)
 
-    # Telemetry
-    store_cls = TelemetryStore
-    if store_cls is not None:
+    # Telemetry — reuse store created above
+    if store is not None:
         try:
-            store = store_cls()
             store.record({
                 "task_id": task_id,
-                "judge_verdict": result.verdict,
+                "judge_verdict": verdict,
                 "judge_categories_failed": json.dumps(result.fail_reasons),
                 "lob_violations": 1 if result.lob_violation else 0,
                 "duplication_detected": result.duplication,
@@ -160,6 +208,9 @@ def run(state_dir: Path) -> int:
 
 
 def main() -> int:
+    if os.environ.get("DEVFLOW_JUDGE_SUBPROCESS") == "1":
+        print("[devflow:judge] skipped (subprocess guard)", file=sys.stderr)
+        return 0
     try:
         return run(_get_state_dir())
     except Exception as exc:

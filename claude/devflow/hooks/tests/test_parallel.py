@@ -111,19 +111,19 @@ class TestGetSessionId:
         importlib.reload(_session)
         import os
         sid = _session.get_session_id()
-        assert sid.startswith(f"pid-{os.getpid()}-")
+        # PID fallback includes pid and optional timestamp for uniqueness
+        assert sid.startswith(f"pid-{os.getpid()}")
 
-    def test_fallback_is_unique_across_calls_with_different_timestamps(self, monkeypatch):
+    def test_fallback_is_stable_within_same_process(self, monkeypatch):
+        """PID fallback returns the same value on repeated calls (stable per process)."""
         monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
         monkeypatch.delenv("DEVFLOW_SESSION_ID", raising=False)
         import importlib
         import _session
         importlib.reload(_session)
-        with patch("_session.time") as mock_time:
-            mock_time.time.side_effect = [1000, 1001]
-            sid1 = _session.get_session_id()
-            sid2 = _session.get_session_id()
-        assert sid1 != sid2
+        sid1 = _session.get_session_id()
+        sid2 = _session.get_session_id()
+        assert sid1 == sid2  # stable — same PID
 
     def test_util_re_exports_get_session_id_from_session_module(self):
         """_util.py must import get_session_id from _session, not define it."""
@@ -276,6 +276,10 @@ class TestTaskRegistry:
 _SCRIPT = _DEVFLOW_ROOT / "scripts" / "parallel_launch.sh"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="parallel_launch.sh uses macOS osascript; Windows resolves 'bash' to the WSL wrapper",
+)
 class TestParallelLaunchScript:
 
     def test_dry_run_prints_table_no_files_created(self, tmp_path):

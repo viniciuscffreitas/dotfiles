@@ -65,21 +65,24 @@ def _cleanup_discovery_marker() -> None:
 
 
 def main() -> int:
-    if not is_safe_session():
-        print("[devflow] no session ID — guard bypassed", file=sys.stderr)
+    try:
+        if not is_safe_session():
+            print("[devflow] no session ID — guard bypassed", file=sys.stderr)
+            _cleanup_discovery_marker()
+            return 0
+
+        active, description = _has_active_spec()
+        if active:
+            reason = (
+                f"[devflow] Active spec detected: {description}\n"
+                f"Complete it or use /pause to explicitly pause.\n"
+                f"After /pause, session exit will be allowed."
+            )
+            print(hook_block(reason))
+
         _cleanup_discovery_marker()
-        return 0
-
-    active, description = _has_active_spec()
-    if active:
-        reason = (
-            f"[devflow] Active spec detected: {description}\n"
-            f"Complete it or use /pause to explicitly pause.\n"
-            f"After /pause, session exit will be allowed."
-        )
-        print(hook_block(reason))
-
-    _cleanup_discovery_marker()
+    except Exception:
+        pass
     return 0
 
 

@@ -114,25 +114,27 @@ def find_test_file(impl_path: Path, max_depth: int = 5) -> bool:
 
 
 def main() -> int:
-    hook_data = read_hook_stdin()
-    file_path = get_edited_file(hook_data)
+    try:
+        hook_data = read_hook_stdin()
+        file_path = get_edited_file(hook_data)
 
-    if not file_path or not file_path.exists():
-        return 0
+        if not file_path or not file_path.exists():
+            return 0
 
-    if is_test_file(file_path) or not is_impl_file(file_path):
-        return 0
+        if is_test_file(file_path) or not is_impl_file(file_path):
+            return 0
 
-    has_test = find_test_file(file_path)
-    if not has_test:
-        suggested = suggest_test_path(file_path)
-        context = (
-            f"[devflow TDD] {file_path.name}: implementation without corresponding test.\n"
-            f"Suggestion: create `{suggested}`\n"
-            f"TDD: RED -> GREEN -> REFACTOR"
-        )
-        print(hook_context(context))
-
+        has_test = find_test_file(file_path)
+        if not has_test:
+            suggested = suggest_test_path(file_path)
+            context = (
+                f"[devflow TDD] {file_path.name}: implementation without corresponding test.\n"
+                f"Suggestion: create `{suggested}`\n"
+                f"TDD: RED -> GREEN -> REFACTOR"
+            )
+            print(hook_context(context))
+    except Exception:
+        pass
     return 0
 
 

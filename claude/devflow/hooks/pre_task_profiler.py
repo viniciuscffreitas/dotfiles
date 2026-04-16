@@ -1,7 +1,7 @@
 """
 PreToolUse hook — Task Risk Profiler.
 
-Matcher: Bash (git / write operations).
+Matcher: Write|Edit|MultiEdit|Bash (write and git operations).
 Reads context from project-profile.json and active-spec.json, runs the
 TaskRiskProfiler, writes risk-profile.json to state dir, logs to TelemetryStore,
 and prints the oversight level for Claude Code to consume.

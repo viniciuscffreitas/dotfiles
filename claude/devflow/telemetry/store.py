@@ -33,6 +33,9 @@ _COLUMNS = [
     "firewall_task_id",
     "firewall_success",
     "firewall_duration_ms",
+    "estimated_usd",
+    "test_retry_count",
+    "tdd_followthrough_rate",
     "instincts_captured_count",
     "cost_usd",
     "session_id",
@@ -81,6 +84,9 @@ CREATE TABLE IF NOT EXISTS task_executions (
     firewall_task_id                TEXT,
     firewall_success                BOOLEAN,
     firewall_duration_ms            REAL,
+    estimated_usd                   REAL,
+    test_retry_count                INTEGER,
+    tdd_followthrough_rate          REAL,
     instincts_captured_count        INTEGER,
     cost_usd                        REAL,
     session_id                      TEXT,
@@ -125,6 +131,9 @@ class TelemetryStore:
                     ("firewall_task_id", "TEXT"),
                     ("firewall_success", "BOOLEAN"),
                     ("firewall_duration_ms", "REAL"),
+                    ("estimated_usd", "REAL"),
+                    ("test_retry_count", "INTEGER"),
+                    ("tdd_followthrough_rate", "REAL"),
                     ("instincts_captured_count", "INTEGER"),
                     ("cost_usd", "REAL"),
                     ("session_id", "TEXT"),
@@ -264,12 +273,17 @@ class TelemetryStore:
                 "GROUP BY task_category"
             ).fetchall()
 
+            avg_usd = conn.execute(
+                "SELECT AVG(estimated_usd) FROM task_executions WHERE estimated_usd IS NOT NULL"
+            ).fetchone()[0] or 0.0
+
         return {
             "total_tasks": total,
             "pass_rate": (passed / judged) if judged > 0 else 0.0,
             "avg_context_tokens": avg_tokens,
             "spiral_rate": (spirals / total) if total > 0 else 0.0,
             "avg_iterations_by_category": {r[0]: r[1] for r in cat_rows},
+            "avg_estimated_usd": avg_usd,
         }
 
     def get_skill_usage(self, skill_name: str) -> dict:
@@ -323,3 +337,29 @@ class TelemetryStore:
             }
         except Exception:
             return {"avg_execution_ms": None, "error_rate": 0.0, "last_triggered_at": None}
+
+
+# ---------------------------------------------------------------------------
+# Process-level singleton — avoids N TelemetryStore() instantiations per Stop
+# ---------------------------------------------------------------------------
+
+_process_store: "TelemetryStore | None" = None
+
+
+def get_store(db_path: "Path | None" = None) -> "TelemetryStore":
+    """Return the process-level TelemetryStore singleton.
+
+    Hooks running inside stop_dispatcher (same process) share one instance:
+    one threading.Lock, one SQLite connection setup, one schema init.
+    Direct TelemetryStore() construction still works and remains independent.
+    """
+    global _process_store
+    if _process_store is None:
+        _process_store = TelemetryStore(db_path)
+    return _process_store
+
+
+def _reset_store() -> None:
+    """Reset the singleton — for test isolation only."""
+    global _process_store
+    _process_store = None

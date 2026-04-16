@@ -11,8 +11,8 @@ description: >
 
 | Model | ID | USD / MTok (in / out) | Best for |
 |---|---|---|---|
-| **Opus 4.7** | `claude-opus-4-7` | $5 / $25 | Same niche as 4.6 but with a new tokenizer (see "Opus 4.6 vs 4.7" below). Opt-in until inflation is measured. |
-| **Opus 4.6** | `claude-opus-4-6` | $5 / $25 | Architectural planning, system design, complex trade-off analysis, very hard debugging without a hypothesis. Supports Fast mode ($30 / $150) when latency matters. **Default Opus tier.** |
+| **Opus 4.7** | `claude-opus-4-7` | $5 / $25 | Architectural planning, system design, complex trade-off analysis, hard debugging without a hypothesis. Adaptive thinking (no fixed budget). **Default Opus tier.** |
+| **Opus 4.6** | `claude-opus-4-6` | $5 / $25 | Legacy. Use only when Fast mode latency ($30 / $150) is required — 4.7 does not support Fast mode. |
 | **Sonnet 4.6** | `claude-sonnet-4-6` | $3 / $15 | Implementation, refactoring, code review, debugging with a formed hypothesis — **default for 90% of tasks** |
 | **Haiku 4.5** | `claude-haiku-4-5-20251001` | $1 / $5 | Simple search, formatting, trivial transformations, tasks under 2 min |
 
@@ -35,9 +35,9 @@ Both versions are priced identically ($5 / $25) but have different trade-offs:
 | Benchmarks | Baseline | Higher on coding / vision tasks |
 | Cache behavior | Known | Needs measurement |
 
-**Default stance:** stick with **Opus 4.6** for devflow hooks (judge, firewall, instinct capture) and planning work. Flip to 4.7 only after `telemetry/cli.py stats --by-model` shows the effective inflation is acceptable for the workload — see `docs/opus-4-7-policy.md` for the explicit criterion.
+**Default stance:** **Opus 4.7** is the default Opus tier for planning, design, and hard debugging. It uses adaptive thinking (no fixed thinking budget) and with `effortLevel: xhigh` is tuned for strong autonomy without token runaway. Opus 4.6 is legacy — only fall back when Fast mode latency is required (4.7 does not support Fast mode). Measure effective cost per task via `telemetry/cli.py stats --by-model` if tokenizer inflation becomes a concern.
 
-**Per-task override:** you can always invoke Claude Code with `--model claude-opus-4-7` for a one-off session without changing the global default.
+**Per-task override:** invoke Claude Code with `--model claude-opus-4-6` for legacy sessions when Fast mode is needed.
 
 ## Where Model Selection Matters
 
@@ -51,11 +51,12 @@ Model selection does NOT happen automatically mid-conversation. You choose the m
 
 ## When Each Model Shines
 
-### Opus 4.6
+### Opus 4.7 (default Opus tier)
 - Designing a new system from scratch with multiple interacting components
 - Evaluating architectural trade-offs (e.g., "monolith vs microservices for this use case")
 - Debugging a subtle issue where you have no hypothesis and need deep reasoning
 - Writing a spec for a complex feature with many edge cases
+- Long-running agentic tasks with full upfront context (favor `effortLevel: xhigh` + Auto Mode)
 
 ### Sonnet 4.6
 - Implementing features from a spec or plan

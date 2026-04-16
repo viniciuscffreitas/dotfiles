@@ -6,6 +6,7 @@ Usage:
     python3.13 telemetry/cli.py stats --by-model   — cost + runs grouped by model
     python3.13 telemetry/cli.py recent             — last 10 tasks
     python3.13 telemetry/cli.py anxiety            — context anxiety cases (>60k tokens at first action)
+    python3.13 telemetry/cli.py behavior           — scan transcripts for thrashing / error-loops / restart-clusters
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from telemetry.signals.runner import run_behavior_signals
 from telemetry.store import TelemetryStore
 
 
@@ -52,6 +54,7 @@ def cmd_stats() -> None:
     print(f"{'Pass rate:':<26} {s['pass_rate']:.1%}")
     print(f"{'Avg context tokens:':<26} {s['avg_context_tokens']:,.0f}")
     print(f"{'Spiral rate:':<26} {s['spiral_rate']:.1%}")
+    print(f"{'Avg estimated USD:':<26} ${s.get('avg_estimated_usd', 0.0):.4f}")
     iters = s["avg_iterations_by_category"]
     if iters:
         print("Avg iterations by category:")
@@ -96,7 +99,48 @@ def cmd_anxiety() -> None:
         )
 
 
-_COMMANDS = {"stats": cmd_stats, "recent": cmd_recent, "anxiety": cmd_anxiety}
+def cmd_behavior() -> None:
+    """Scan ~/.claude/projects/ transcripts for behavior anti-patterns."""
+    report = run_behavior_signals()
+    if report.sessions_scanned == 0:
+        print("No transcripts found under ~/.claude/projects/.")
+        return
+    print(
+        f"Scanned {report.sessions_scanned} sessions — "
+        f"{report.total_signals} signal(s): "
+        f"{len(report.thrashing)} thrashing, "
+        f"{len(report.error_loops)} error-loops, "
+        f"{len(report.restart_clusters)} restart-clusters."
+    )
+    if report.thrashing:
+        print("\n── Edit thrashing (file edited ≥5x) ──")
+        print(f"{'session':<14} {'edits':>6}  {'sev':<9}  file")
+        for hit in report.thrashing[:20]:
+            print(f"{hit.session_id[:13]:<14} {hit.edit_count:>6}  {hit.severity:<9}  {hit.file_path}")
+    if report.error_loops:
+        print("\n── Error loops (consecutive tool failures) ──")
+        print(f"{'session':<14} {'fails':>6}  {'sev':<9}  tool")
+        for hit in report.error_loops[:20]:
+            print(
+                f"{hit.session_id[:13]:<14} {hit.consecutive_failures:>6}  "
+                f"{hit.severity:<9}  {hit.tool_name}"
+            )
+    if report.restart_clusters:
+        print("\n── Restart clusters (≥3 sessions in 30min, same cwd) ──")
+        print(f"{'sessions':>9}  {'window_min':>10}  {'sev':<9}  cwd")
+        for cluster in report.restart_clusters[:20]:
+            print(
+                f"{len(cluster.session_ids):>9}  {cluster.window_minutes:>10}  "
+                f"{cluster.severity:<9}  {cluster.cwd}"
+            )
+
+
+_COMMANDS = {
+    "stats": cmd_stats,
+    "recent": cmd_recent,
+    "anxiety": cmd_anxiety,
+    "behavior": cmd_behavior,
+}
 
 
 if __name__ == "__main__":

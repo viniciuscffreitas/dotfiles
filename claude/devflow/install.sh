@@ -17,22 +17,11 @@ if ! command -v python3 &>/dev/null; then
 fi
 
 # Ensure directories exist
-mkdir -p "$SKILLS_DIR" "$COMMANDS_DIR"
+mkdir -p "$COMMANDS_DIR"
 
-# 1. Symlink skills (not copy — stays in sync with repo)
+# 1. Link skills via Python (cross-platform: symlink with fallback to copy on Windows)
 echo "Linking skills..."
-for skill_dir in "$DEVFLOW_DIR"/skills/devflow-*/; do
-    skill_name=$(basename "$skill_dir")
-    target="$SKILLS_DIR/$skill_name"
-    if [ -L "$target" ]; then
-        rm "$target"
-    elif [ -d "$target" ]; then
-        echo "  SKIP: $skill_name (already exists as directory, not overwriting)"
-        continue
-    fi
-    ln -s "$skill_dir" "$target"
-    echo "  OK: $skill_name"
-done
+python3 "$DEVFLOW_DIR/install_skills.py" "$DEVFLOW_DIR" "$SKILLS_DIR"
 
 # 2. Copy commands (these are small .md files, copy is fine)
 echo "Copying commands..."
@@ -52,120 +41,10 @@ from pathlib import Path
 devflow_dir = sys.argv[1]
 settings_path = Path(sys.argv[2])
 
-# Hook definitions — what devflow needs registered
-DEVFLOW_HOOKS = {
-    "PreToolUse": [
-        {
-            "matcher": ".*",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_task_profiler.py"},
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_task_firewall.py"},
-            ]
-        },
-        {
-            "matcher": "Write|Edit|MultiEdit",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/secrets_gate.py"},
-            ]
-        },
-        {
-            "matcher": "Bash",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_push_gate.py"},
-            ]
-        },
-    ],
-    "PostToolUse": [
-        {
-            "matcher": "Write|Edit|MultiEdit",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/file_checker.py"},
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/tdd_enforcer.py"},
-            ]
-        },
-        {
-            "matcher": ".*",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/context_monitor.py"},
-            ]
-        },
-    ],
-    "UserPromptSubmit": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/spec_phase_tracker.py"},
-            ]
-        },
-    ],
-    "Stop": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/spec_stop_guard.py", "async": False},
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/post_task_judge.py", "async": False},
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/task_telemetry.py", "async": False},
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/desktop_notify.py", "async": True, "timeout": 5},
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/instinct_capture.py", "async": True, "timeout": 30},
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/cost_tracker.py", "async": True, "timeout": 10},
-            ]
-        },
-    ],
-    "SessionStart": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/discovery_scan.py"},
-            ]
-        },
-        {
-            "matcher": "compact",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/post_compact_restore.py"},
-            ]
-        },
-    ],
-    "PreCompact": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/pre_compact.py"},
-            ]
-        },
-    ],
-    "SubagentStart": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/subagent_tracker.py", "async": True},
-            ]
-        },
-    ],
-    "SubagentStop": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/subagent_tracker.py", "async": True},
-            ]
-        },
-    ],
-    "CwdChanged": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/cwd_changed.py"},
-            ]
-        },
-    ],
-    "ConfigChange": [
-        {
-            "matcher": "",
-            "hooks": [
-                {"type": "command", "command": f"python3 {devflow_dir}/hooks/config_reload.py", "async": True},
-            ]
-        },
-    ],
-}
+# Import hook configuration from install_config.py (single source of truth)
+sys.path.insert(0, devflow_dir)
+from install_config import build_hooks
+DEVFLOW_HOOKS = build_hooks(devflow_dir)
 
 # Load existing settings
 settings = {}
@@ -182,7 +61,7 @@ def is_devflow_hook(hook_entry):
     """Check if a hook entry belongs to devflow."""
     for h in hook_entry.get("hooks", []):
         cmd = h.get("command", "")
-        if "/devflow/hooks/" in cmd:
+        if "/devflow/hooks/" in cmd or "\\devflow\\hooks\\" in cmd:
             return True
     return False
 

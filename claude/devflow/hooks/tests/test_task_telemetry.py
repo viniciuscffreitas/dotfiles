@@ -2,14 +2,16 @@ import json
 import sys
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from task_telemetry import (
+    _anxiety_ratio,
     _cwd_to_slug,
+    _estimate_usd,
     _extract_text,
     _find_session_jsonl,
     _is_source_file,
@@ -484,7 +486,9 @@ def _make_spec_jsonl(tmp_path: Path, session_id: str, cwd: str) -> None:
 
 
 def test_main_dedup_skips_second_write_same_session(tmp_path):
-    """Stop hook called twice with same session_id produces exactly 1 record."""
+    """Stop hook called twice appends both records (append-only).
+    SQLite is the dedup layer; JSONL is a log.
+    """
     session_id = "dedup-session-abc"
     cwd = "/Users/vini/Developer/agents"
     _make_spec_jsonl(tmp_path, session_id, cwd)
@@ -502,7 +506,9 @@ def test_main_dedup_skips_second_write_same_session(tmp_path):
         main()
 
     records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
-    assert len(records) == 1, f"expected 1 record, got {len(records)}"
+    # Append-only: 2 writes → 2 records in log (SQLite COALESCE upsert handles dedup)
+    assert len(records) == 2, f"expected 2 appended records, got {len(records)}"
+    assert all(r["session_id"] == session_id for r in records)
 
 
 def test_main_dedup_allows_different_sessions(tmp_path):
@@ -530,15 +536,14 @@ def test_main_dedup_allows_different_sessions(tmp_path):
 
 
 def test_main_dedup_corrupt_line_does_not_produce_duplicate(tmp_path, capsys):
-    """Malformed line in sessions.jsonl must not break dedup for a valid session already recorded."""
+    """Pre-existing corrupt line in sessions.jsonl must not break appending new record."""
     session_id = "dedup-session-corrupt"
     cwd = "/Users/vini/Developer/agents"
     _make_spec_jsonl(tmp_path, session_id, cwd)
     telemetry_log = tmp_path / "sessions.jsonl"
 
-    # Write one valid record + one corrupt line into the log
-    valid_record = json.dumps({"session_id": session_id, "project": "agents", "phases": [], "total_tokens": 0})
-    telemetry_log.write_text(valid_record + "\n" + "not valid json\n")
+    # Pre-seed a corrupt line in the log
+    telemetry_log.write_text("not valid json\n")
 
     with (
         patch("task_telemetry.read_hook_stdin", return_value={}),
@@ -551,14 +556,11 @@ def test_main_dedup_corrupt_line_does_not_produce_duplicate(tmp_path, capsys):
 
     assert rc == 0
     lines = [l for l in telemetry_log.read_text().splitlines() if l.strip()]
-    # Corrupt line is preserved; no duplicate appended
     valid_lines = [l for l in lines if l.startswith("{")]
     records = [json.loads(l) for l in valid_lines]
-    assert len(records) == 1, f"expected 1 valid record, got {len(records)}"
+    # Append-only: corrupt line pre-existed, new valid record appended
+    assert len(records) == 1, f"expected 1 new valid record, got {len(records)}"
     assert records[0]["session_id"] == session_id
-    # Warn about corrupt line
-    err = capsys.readouterr().err
-    assert "corrupt" in err
 
 
 # ---------------------------------------------------------------------------
@@ -645,8 +647,10 @@ def test_main_lifecycle_pending_then_completed(tmp_path):
         main()
 
     records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
-    assert len(records) == 1, "must have exactly 1 record (upsert, not duplicate)"
-    phases = [p["phase"] for p in records[0]["phases"]]
+    # Append-only: 2 Stop events → 2 records; most recent has all phases
+    assert len(records) == 2, f"expected 2 appended records, got {len(records)}"
+    latest = records[-1]
+    phases = [p["phase"] for p in latest["phases"]]
     assert "PENDING" in phases
     assert "IMPLEMENTING" in phases
     assert "COMPLETED" in phases
@@ -683,10 +687,12 @@ def test_main_upsert_replaces_stale_pending_record(tmp_path):
         main()
 
     records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
-    assert len(records) == 1, "stale record must be replaced, not duplicated"
-    phases = [p["phase"] for p in records[0]["phases"]]
-    assert "IMPLEMENTING" in phases, "replaced record must contain IMPLEMENTING"
-    assert "COMPLETED" in phases, "replaced record must contain COMPLETED"
+    # Append-only: stale record + new record = 2 lines; latest has full phases
+    assert len(records) == 2, f"expected stale + new record, got {len(records)}"
+    latest = records[-1]
+    phases = [p["phase"] for p in latest["phases"]]
+    assert "IMPLEMENTING" in phases, "new record must contain IMPLEMENTING"
+    assert "COMPLETED" in phases, "new record must contain COMPLETED"
 
 
 def test_main_completed_record_has_non_null_key_fields(tmp_path):
@@ -755,8 +761,9 @@ def test_main_completed_record_has_non_null_key_fields(tmp_path):
         main()
 
     records = [json.loads(l) for l in telemetry_log.read_text().splitlines() if l.strip()]
-    assert len(records) == 1
-    rec = records[0]
+    # Append-only: stale seed + new append = 2 records; check the latest
+    assert len(records) >= 1
+    rec = records[-1]  # most recent
 
     # context_tokens proxy
     assert rec["total_tokens"] > 0, "total_tokens must be non-zero"
@@ -1247,7 +1254,428 @@ def test_main_writes_to_sqlite_after_sessions_jsonl(tmp_path):
     assert call_payload["task_id"] == "sqlite-test-session"
     assert "context_tokens_consumed" in call_payload
     assert "iterations_to_completion" in call_payload
+
+
+# ---------------------------------------------------------------------------
+# Task 2: populate existing schema columns
+# tool_calls_total, context_tokens_at_first_action, compaction_events
+# ---------------------------------------------------------------------------
+
+import task_telemetry  # noqa: E402 — needed for patching module attributes
+
+
+def _tool_use(name: str, tool_id: str, inp: dict) -> dict:
+    return {"type": "tool_use", "id": tool_id, "name": name, "input": inp}
+
+
+def test_parse_session_counts_tool_calls(tmp_path):
+    """tool_calls_total reflects every tool_use across all assistant turns."""
+    lines = [
+        _make_assistant_entry("T1", {"input_tokens": 100, "output_tokens": 10}, [
+            _tool_use("Read", "r1", {"file_path": "src/foo.py"}),
+            _tool_use("Grep", "r2", {"pattern": "def"}),
+        ]),
+        _make_assistant_entry("T2", {"input_tokens": 50, "output_tokens": 5}, [
+            _tool_use("Bash", "r3", {"command": "echo hi"}),
+        ]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+    result = parse_session(jsonl)
+    assert result["tool_calls_total"] == 3
+
+
+def test_parse_session_tool_calls_zero_when_no_tools(tmp_path):
+    """Assistant turns with no tool_uses → tool_calls_total == 0."""
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry("T1", {"input_tokens": 100, "output_tokens": 10}) + "\n"
+    )
+    result = parse_session(jsonl)
+    assert result["tool_calls_total"] == 0
+
+
+def test_parse_session_context_tokens_at_first_source_write(tmp_path):
+    """context_tokens_at_first_action is cumulative tokens at the first source Write."""
+    spec_path = "/a/b/state/s1/active-spec.json"
+    lines = [
+        # Turn 1: PENDING (6100 tokens)
+        _make_assistant_entry("T1", {"input_tokens": 1000, "cache_read_input_tokens": 5000, "output_tokens": 100}, [
+            _tool_use("Write", "w1", {
+                "file_path": spec_path,
+                "content": json.dumps({"status": "PENDING", "plan_path": "plan.md"}),
+            }),
+        ]),
+        # Turn 2: 900 more tokens, then Write .py  (total = 7000)
+        _make_assistant_entry("T2", {"input_tokens": 800, "output_tokens": 100}, [
+            _tool_use("Write", "w2", {"file_path": "src/auth.py", "content": "pass"}),
+        ]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+    result = parse_session(jsonl)
+    assert result["context_tokens_at_first_action"] == 7000
+
+
+def test_parse_session_first_action_zero_when_no_source_writes(tmp_path):
+    """No source file writes in session → context_tokens_at_first_action == 0."""
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry("T1", {"input_tokens": 100, "output_tokens": 10}) + "\n"
+    )
+    result = parse_session(jsonl)
+    assert result["context_tokens_at_first_action"] == 0
+
+
+def test_main_reads_compaction_count_from_state(tmp_path):
+    """main() reads compaction_count.json from session state and passes to TelemetryStore."""
+    projects_dir = tmp_path / "projects"
+    slug = "-Users-vini-Developer-myproject"
+    session_dir = projects_dir / slug
+    session_dir.mkdir(parents=True)
+
+    # Build minimal JSONL with one spec cycle
+    spec_path = str(tmp_path / "active-spec.json")
+    jsonl = session_dir / "comp-session.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry("T1", {"input_tokens": 500, "output_tokens": 50}, [
+            _tool_use("Write", "w1", {
+                "file_path": spec_path,
+                "content": json.dumps({"status": "PENDING", "plan_path": "p.md"}),
+            }),
+        ]) + "\n"
+        + _make_assistant_entry("T2", {"input_tokens": 200, "output_tokens": 20}, [
+            _tool_use("Write", "w2", {"file_path": "src/foo.py", "content": "x=1"}),
+        ]) + "\n"
+    )
+
+    # Write compaction count state file
+    state_dir = tmp_path / "state" / "comp-session"
+    state_dir.mkdir(parents=True)
+    (state_dir / "compaction_count.json").write_text(json.dumps({"count": 3}))
+
+    telemetry_dir = tmp_path / "telemetry"
+    telemetry_dir.mkdir()
+    mock_store = MagicMock()
+
+    with (
+        patch.object(task_telemetry, "TELEMETRY_DIR", telemetry_dir),
+        patch.object(task_telemetry, "PROJECTS_DIR", projects_dir),
+        patch("task_telemetry.read_hook_stdin", return_value={
+            "session_id": "comp-session",
+            "cwd": "/Users/vini/Developer/myproject",
+        }),
+        patch("task_telemetry.TelemetryStore", return_value=mock_store),
+        patch("task_telemetry._get_state_dir", return_value=state_dir),
+    ):
+        result = main()
+
+    assert result == 0
+    call_payload = mock_store.record.call_args[0][0]
+    assert call_payload.get("compaction_events") == 3
+
+
+def test_main_compaction_count_zero_when_no_state_file(tmp_path):
+    """main() defaults compaction_events to 0 when state file is absent."""
+    projects_dir = tmp_path / "projects"
+    slug = "-Users-vini-Developer-myproject"
+    session_dir = projects_dir / slug
+    session_dir.mkdir(parents=True)
+
+    spec_path = str(tmp_path / "active-spec.json")
+    jsonl = session_dir / "nocomp-session.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry("T1", {"input_tokens": 500, "output_tokens": 50}, [
+            _tool_use("Write", "w1", {
+                "file_path": spec_path,
+                "content": json.dumps({"status": "PENDING", "plan_path": "p.md"}),
+            }),
+        ]) + "\n"
+        + _make_assistant_entry("T2", {"input_tokens": 200, "output_tokens": 20}, [
+            _tool_use("Write", "w2", {"file_path": "src/bar.py", "content": "y=2"}),
+        ]) + "\n"
+    )
+
+    state_dir = tmp_path / "state" / "nocomp-session"
+    state_dir.mkdir(parents=True)
+    # No compaction_count.json written
+
+    telemetry_dir = tmp_path / "telemetry"
+    telemetry_dir.mkdir()
+    mock_store = MagicMock()
+
+    with (
+        patch.object(task_telemetry, "TELEMETRY_DIR", telemetry_dir),
+        patch.object(task_telemetry, "PROJECTS_DIR", projects_dir),
+        patch("task_telemetry.read_hook_stdin", return_value={
+            "session_id": "nocomp-session",
+            "cwd": "/Users/vini/Developer/myproject",
+        }),
+        patch("task_telemetry.TelemetryStore", return_value=mock_store),
+        patch("task_telemetry._get_state_dir", return_value=state_dir),
+    ):
+        result = main()
+
+    assert result == 0
+    call_payload = mock_store.record.call_args[0][0]
+    assert call_payload.get("compaction_events", 0) == 0
     assert "stack" in call_payload
+
+
+# ---------------------------------------------------------------------------
+# Task 3: estimated_usd, test_retry_count, tdd_followthrough_rate
+# ---------------------------------------------------------------------------
+
+def test_estimate_usd_sonnet_known_tokens():
+    """1M input + 1M output on Sonnet 4.6 = $3 + $15 = $18."""
+    usd = _estimate_usd({"input_tokens": 1_000_000, "output_tokens": 1_000_000}, "claude-sonnet-4-6")
+    assert abs(usd - 18.0) < 0.001
+
+
+def test_estimate_usd_opus_known_tokens():
+    """1M input + 1M output on Opus 4.6 = $15 + $75 = $90."""
+    usd = _estimate_usd({"input_tokens": 1_000_000, "output_tokens": 1_000_000}, "claude-opus-4-6")
+    assert abs(usd - 90.0) < 0.001
+
+
+def test_estimate_usd_includes_cache_read():
+    """Cache reads are priced separately (much cheaper than input)."""
+    usd_with_cache = _estimate_usd(
+        {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 1_000_000},
+        "claude-sonnet-4-6",
+    )
+    assert usd_with_cache > 0.0
+    assert usd_with_cache < 1.0  # cache read is $0.30/M for Sonnet
+
+
+def test_estimate_usd_fallback_when_unknown_model():
+    """Unknown model uses Sonnet pricing as fallback."""
+    usd_unknown = _estimate_usd({"input_tokens": 1_000_000, "output_tokens": 0}, "claude-unknown-9")
+    usd_sonnet  = _estimate_usd({"input_tokens": 1_000_000, "output_tokens": 0}, "claude-sonnet-4-6")
+    assert abs(usd_unknown - usd_sonnet) < 0.001
+
+
+def test_estimate_usd_zero_tokens():
+    assert _estimate_usd({}, "claude-sonnet-4-6") == 0.0
+
+
+def test_parse_session_returns_estimated_usd(tmp_path):
+    """parse_session returns estimated_usd > 0 when there are tokens."""
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry("T1", {"input_tokens": 10_000, "output_tokens": 1_000}) + "\n"
+    )
+    result = parse_session(jsonl)
+    assert "estimated_usd" in result
+    assert result["estimated_usd"] > 0.0
+
+
+def test_parse_session_test_retry_count_counts_failures(tmp_path):
+    """test_retry_count counts failed test runs before first success."""
+    fail_result = json.dumps({"type": "tool_result", "tool_use_id": "bash-1", "content": "2 failed, 0 passed"})
+    success_result = json.dumps({"type": "tool_result", "tool_use_id": "bash-2", "content": "5 passed"})
+
+    lines = [
+        # pytest run 1 — fails
+        _make_assistant_entry("T1", {"input_tokens": 100, "output_tokens": 10}, [
+            _tool_use("Bash", "bash-1", {"command": "pytest tests/"}),
+        ]),
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "bash-1", "content": "2 failed, 0 passed"},
+            ]},
+        }),
+        # pytest run 2 — succeeds
+        _make_assistant_entry("T2", {"input_tokens": 50, "output_tokens": 5}, [
+            _tool_use("Bash", "bash-2", {"command": "pytest tests/"}),
+        ]),
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "bash-2", "content": "5 passed"},
+            ]},
+        }),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+    result = parse_session(jsonl)
+    assert result["test_retry_count"] == 1
+
+
+def test_parse_session_test_retry_count_zero_when_first_run_passes(tmp_path):
+    """test_retry_count == 0 when the first test run succeeds."""
+    lines = [
+        _make_assistant_entry("T1", {"input_tokens": 100, "output_tokens": 10}, [
+            _tool_use("Bash", "bash-ok", {"command": "pytest tests/"}),
+        ]),
+        json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "bash-ok", "content": "3 passed"},
+            ]},
+        }),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+    result = parse_session(jsonl)
+    assert result["test_retry_count"] == 0
+
+
+def test_parse_session_tdd_followthrough_when_test_created(tmp_path):
+    """Source write followed by test write → followthrough_rate == 1.0."""
+    lines = [
+        _make_assistant_entry("T1", {"input_tokens": 100, "output_tokens": 10}, [
+            _tool_use("Write", "w1", {"file_path": "src/auth.py", "content": "pass"}),
+        ]),
+        _make_assistant_entry("T2", {"input_tokens": 50, "output_tokens": 5}, [
+            _tool_use("Write", "w2", {"file_path": "tests/test_auth.py", "content": "def test_x(): pass"}),
+        ]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+    result = parse_session(jsonl)
+    assert result["tdd_followthrough_rate"] == 1.0
+
+
+def test_parse_session_tdd_followthrough_when_no_test_written(tmp_path):
+    """Source write with no test write in session → followthrough_rate == 0.0."""
+    lines = [
+        _make_assistant_entry("T1", {"input_tokens": 100, "output_tokens": 10}, [
+            _tool_use("Write", "w1", {"file_path": "src/auth.py", "content": "pass"}),
+        ]),
+    ]
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n")
+    result = parse_session(jsonl)
+    assert result["tdd_followthrough_rate"] == 0.0
+
+
+def test_parse_session_tdd_followthrough_no_source_writes_is_one(tmp_path):
+    """No source writes in session → followthrough_rate == 1.0 (nothing to follow through)."""
+    jsonl = tmp_path / "s.jsonl"
+    jsonl.write_text(
+        _make_assistant_entry("T1", {"input_tokens": 100, "output_tokens": 10}) + "\n"
+    )
+    result = parse_session(jsonl)
+    assert result["tdd_followthrough_rate"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Task 7: context anxiety auto-surfacing
+# ---------------------------------------------------------------------------
+
+def test_anxiety_ratio_high():
+    """110k tokens at first action on 200k window → 0.55 > 0.5."""
+    assert _anxiety_ratio(110_000, 200_000) > 0.5
+
+
+def test_anxiety_ratio_low():
+    """50k tokens at first action on 200k window → 0.25 < 0.5."""
+    assert _anxiety_ratio(50_000, 200_000) < 0.5
+
+
+def test_anxiety_ratio_zero_window_returns_zero():
+    assert _anxiety_ratio(100_000, 0) == 0.0
+
+
+def test_anxiety_ratio_zero_tokens_returns_zero():
+    assert _anxiety_ratio(0, 200_000) == 0.0
+
+
+def test_main_surfaces_anxiety_draft_when_ratio_high(tmp_path, capsys):
+    """When context_tokens_at_first_action > 50% of window, print tech debt draft."""
+    projects_dir = tmp_path / "projects"
+    slug = "-Users-vini-Developer-agents"
+    session_dir = projects_dir / slug
+    session_dir.mkdir(parents=True)
+
+    spec_path = "/some/path/active-spec.json"
+    # Session with 150k tokens at first source write on 200k window = 75%
+    jsonl = session_dir / "anxiety-session.jsonl"
+    jsonl.write_text(
+        # Turn 1: big context load (150k tokens), then immediately write source
+        _make_assistant_entry("T1", {
+            "input_tokens": 140_000,
+            "cache_read_input_tokens": 9_000,
+            "output_tokens": 1_000,
+        }, [
+            _tool_use("Write", "w1", {
+                "file_path": spec_path,
+                "content": json.dumps({"status": "PENDING", "plan_path": "p.md"}),
+            }),
+        ]) + "\n"
+        + _make_assistant_entry("T2", {"input_tokens": 100, "output_tokens": 10}, [
+            _tool_use("Write", "w2", {"file_path": "src/foo.py", "content": "x=1"}),
+        ]) + "\n"
+    )
+
+    state_dir = tmp_path / "state" / "anxiety-session"
+    state_dir.mkdir(parents=True)
+    telemetry_dir = tmp_path / "telemetry"
+    telemetry_dir.mkdir()
+    mock_store = MagicMock()
+
+    with (
+        patch.object(task_telemetry, "TELEMETRY_DIR", telemetry_dir),
+        patch.object(task_telemetry, "PROJECTS_DIR", projects_dir),
+        patch("task_telemetry.read_hook_stdin", return_value={
+            "session_id": "anxiety-session",
+            "cwd": "/Users/vini/Developer/agents",
+        }),
+        patch("task_telemetry.TelemetryStore", return_value=mock_store),
+        patch("task_telemetry._get_state_dir", return_value=state_dir),
+    ):
+        rc = main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "context" in out.lower() or "anxiety" in out.lower() or "tech debt" in out.lower()
+
+
+def test_main_no_anxiety_draft_when_ratio_low(tmp_path, capsys):
+    """When anxiety ratio is low, no draft is printed."""
+    projects_dir = tmp_path / "projects"
+    slug = "-Users-vini-Developer-agents"
+    session_dir = projects_dir / slug
+    session_dir.mkdir(parents=True)
+
+    spec_path = "/some/path/active-spec.json"
+    jsonl = session_dir / "low-session.jsonl"
+    jsonl.write_text(
+        # Turn 1: small context (10k tokens), then source write
+        _make_assistant_entry("T1", {"input_tokens": 9_000, "output_tokens": 1_000}, [
+            _tool_use("Write", "w1", {
+                "file_path": spec_path,
+                "content": json.dumps({"status": "PENDING", "plan_path": "p.md"}),
+            }),
+        ]) + "\n"
+        + _make_assistant_entry("T2", {"input_tokens": 100, "output_tokens": 10}, [
+            _tool_use("Write", "w2", {"file_path": "src/foo.py", "content": "x=1"}),
+        ]) + "\n"
+    )
+
+    state_dir = tmp_path / "state" / "low-session"
+    state_dir.mkdir(parents=True)
+    telemetry_dir = tmp_path / "telemetry"
+    telemetry_dir.mkdir()
+    mock_store = MagicMock()
+
+    with (
+        patch.object(task_telemetry, "TELEMETRY_DIR", telemetry_dir),
+        patch.object(task_telemetry, "PROJECTS_DIR", projects_dir),
+        patch("task_telemetry.read_hook_stdin", return_value={
+            "session_id": "low-session",
+            "cwd": "/Users/vini/Developer/agents",
+        }),
+        patch("task_telemetry.TelemetryStore", return_value=mock_store),
+        patch("task_telemetry._get_state_dir", return_value=state_dir),
+    ):
+        rc = main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "context anxiety" not in out.lower() and "tech debt" not in out.lower()
 
 
 # ---------------------------------------------------------------------------

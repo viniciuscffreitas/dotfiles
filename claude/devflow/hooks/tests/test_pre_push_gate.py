@@ -56,7 +56,8 @@ def test_quality_commands_flutter(tmp_path):
     assert cmds[1]["label"] == "flutter analyze"
 
 
-def test_quality_commands_go(tmp_path):
+def test_quality_commands_go(tmp_path, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda x: "/usr/local/bin/go" if x == "go" else None)
     cmds = get_quality_commands(ToolchainKind.GO, tmp_path)
     assert any("vet" in c["label"] for c in cmds)
 

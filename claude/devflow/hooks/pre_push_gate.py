@@ -122,36 +122,38 @@ def run_linters(diff: str, project_root: Path) -> bool:
 
 
 def main() -> int:
-    hook_data = read_hook_stdin()
-    command = get_bash_command(hook_data)
+    try:
+        hook_data = read_hook_stdin()
+        command = get_bash_command(hook_data)
 
-    if not should_gate(command):
-        return 0
+        if not should_gate(command):
+            return 0
 
-    toolchain, project_root = detect_toolchain(Path.cwd())
-    if not toolchain or not project_root:
-        return 0
+        toolchain, project_root = detect_toolchain(Path.cwd())
+        if not toolchain or not project_root:
+            return 0
 
-    # --- Deterministic linters (run first, cheap, never hallucinate) ---
-    diff = get_diff(project_root)
-    if not run_linters(diff, project_root):
-        msg = "Pre-push gate BLOCKED: linter violations found (see above).\n"
-        print(hook_block(msg))
-        return 0
-
-    quality_cmds = get_quality_commands(toolchain, project_root)
-    if not quality_cmds:
-        return 0
-
-    for qc in quality_cmds:
-        code, output = run_command(qc["cmd"], cwd=project_root, timeout=qc["timeout"])
-        if code != 0:
-            msg = f"Pre-push gate BLOCKED: {qc['label']} failed.\n"
-            if output:
-                msg += output[:500]
+        # --- Deterministic linters (run first, cheap, never hallucinate) ---
+        diff = get_diff(project_root)
+        if not run_linters(diff, project_root):
+            msg = "Pre-push gate BLOCKED: linter violations found (see above).\n"
             print(hook_block(msg))
             return 0
 
+        quality_cmds = get_quality_commands(toolchain, project_root)
+        if not quality_cmds:
+            return 0
+
+        for qc in quality_cmds:
+            code, output = run_command(qc["cmd"], cwd=project_root, timeout=qc["timeout"])
+            if code != 0:
+                msg = f"Pre-push gate BLOCKED: {qc['label']} failed.\n"
+                if output:
+                    msg += output[:500]
+                print(hook_block(msg))
+                return 0
+    except Exception:
+        pass
     return 0
 
 

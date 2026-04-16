@@ -7,6 +7,7 @@ Never raises — always returns a JudgeResult.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -156,6 +157,7 @@ class HarnessJudge:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                env={**os.environ, "DEVFLOW_JUDGE_SUBPROCESS": "1"},
             )
             if result.returncode != 0:
                 return _skipped()

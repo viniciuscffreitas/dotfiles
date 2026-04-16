@@ -1,27 +1,29 @@
 # /sync
 
-Scans the current codebase, discovers conventions, and updates the project context.
+Re-scan the current project and refresh the devflow context.
 
-## Usage
+## Instructions
 
+Run the following steps **in order** using the Bash tool:
+
+**Step 1 — Re-run discovery scan:**
+```bash
+python3 ~/.claude/devflow/hooks/discovery_scan.py
 ```
-/sync
+
+**Step 2 — Display the updated project profile:**
+```bash
+python3 ~/.claude/devflow/hooks/sync_report.py
 ```
 
-## What it does
-
-1. **Stack detection** — identifies languages, frameworks, package managers
-2. **Convention discovery** — naming patterns, directory structure, import style
-3. **Test discovery** — test frameworks, existing test patterns, current coverage
-4. **Dependency audit** — key dependencies and their versions
-5. **Context update** — Claude uses discovered conventions for the rest of the session
+Report the output of both commands to the user verbatim. The discovery scan
+updates `project-profile.json` and re-injects learned skill symlinks.
+The sync report confirms the current toolchain, test framework, issue tracker,
+and any active learned skills.
 
 ## When to use
 
 - First session in an unfamiliar project
-- After significant structural changes to the project
-- When Claude is making decisions inconsistent with the project
-
-## Output
-
-Summary of discovered conventions available as session context.
+- After significant structural changes (new framework, renamed dirs)
+- When Claude is making conventions inconsistent with the project
+- After manually editing `.devflow-config.json`
