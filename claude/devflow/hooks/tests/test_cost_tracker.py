@@ -286,6 +286,26 @@ def test_model_written_to_store(tmp_path):
     assert rows[0]["model"] == "claude-opus-4-7"
 
 
+def test_token_breakdown_written_to_store(tmp_path):
+    """cost_tracker persists input/output/cache token counts for cache-hit analysis."""
+    db = tmp_path / "t.db"
+    hook_data = _make_hook_data(
+        "claude-sonnet-4-6",
+        input_tokens=12_345,
+        output_tokens=2_500,
+        session_id="sess-token-breakdown",
+        cache_read_input_tokens=8_000,
+        cache_creation_input_tokens=1_200,
+    )
+    _run_main(hook_data, db)
+    store = TelemetryStore(db_path=db)
+    rows = store.get_recent(1)
+    assert rows[0]["input_tokens"] == 12_345
+    assert rows[0]["output_tokens"] == 2_500
+    assert rows[0]["cache_read_tokens"] == 8_000
+    assert rows[0]["cache_creation_tokens"] == 1_200
+
+
 def test_cost_output_only_sonnet(tmp_path):
     """Output-only session: $15/M output on sonnet."""
     db = tmp_path / "t.db"

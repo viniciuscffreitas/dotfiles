@@ -34,6 +34,27 @@ class TestSchemaColumns:
     def test_model_column_exists(self, store):
         assert "model" in _columns(store)
 
+    def test_token_breakdown_columns_exist(self, store):
+        cols = _columns(store)
+        assert "input_tokens" in cols
+        assert "output_tokens" in cols
+        assert "cache_read_tokens" in cols
+        assert "cache_creation_tokens" in cols
+
+    def test_record_persists_token_breakdown(self, store):
+        store.record({
+            "task_id": "t-tokens",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cache_read_tokens": 200,
+            "cache_creation_tokens": 50,
+        })
+        rows = store.get_recent(n=1)
+        assert rows[0]["input_tokens"] == 1000
+        assert rows[0]["output_tokens"] == 500
+        assert rows[0]["cache_read_tokens"] == 200
+        assert rows[0]["cache_creation_tokens"] == 50
+
     def test_record_with_session_id(self, store):
         store.record({"session_id": "sess-abc", "task_category": "test"})
         rows = store.get_recent(n=1)

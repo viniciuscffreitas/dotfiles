@@ -38,6 +38,10 @@ _COLUMNS = [
     "session_id",
     "context_anxiety_score",
     "model",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
 ]
 
 _CREATE_TABLE = """
@@ -81,7 +85,11 @@ CREATE TABLE IF NOT EXISTS task_executions (
     cost_usd                        REAL,
     session_id                      TEXT,
     context_anxiety_score           REAL,
-    model                           TEXT
+    model                           TEXT,
+    input_tokens                    INTEGER,
+    output_tokens                   INTEGER,
+    cache_read_tokens               INTEGER,
+    cache_creation_tokens           INTEGER
 )
 """
 
@@ -122,6 +130,10 @@ class TelemetryStore:
                     ("session_id", "TEXT"),
                     ("context_anxiety_score", "REAL"),
                     ("model", "TEXT"),
+                    ("input_tokens", "INTEGER"),
+                    ("output_tokens", "INTEGER"),
+                    ("cache_read_tokens", "INTEGER"),
+                    ("cache_creation_tokens", "INTEGER"),
                 ]
                 for col, col_type in _new_cols:
                     try:
