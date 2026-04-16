@@ -303,9 +303,12 @@ Four-phase confirmation flow for destructive operations: **Analyze → Present �
 
 | Model | Use when |
 |-------|---------|
-| **Opus** | Architectural planning, system design, complex trade-offs, debugging without hypothesis |
+| **Opus 4.6** | Architectural planning, system design, complex trade-offs, debugging without hypothesis. Default Opus tier. |
+| **Opus 4.7** | Same niche as 4.6 — opt-in until tokenizer inflation is measured. See [docs/opus-4-7-policy.md](docs/opus-4-7-policy.md). |
 | **Sonnet** | Implementation, refactoring, code review, debugging with hypothesis — **default for 90% of tasks** |
 | **Haiku** | Simple search, formatting, trivial transformations, tasks under 2 minutes |
+
+Per-model cost breakdown: `python3.13 telemetry/cli.py stats --by-model`.
 
 ---
 

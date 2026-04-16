@@ -9,17 +9,35 @@ description: >
 
 ## Decision Table
 
-| Model | ID | Best for |
-|---|---|---|
-| **Opus 4.6** | `claude-opus-4-6` | Architectural planning, system design, complex trade-off analysis, very hard debugging without a hypothesis |
-| **Sonnet 4.6** | `claude-sonnet-4-6` | Implementation, refactoring, code review, debugging with a formed hypothesis — **default for 90% of tasks** |
-| **Haiku 4.5** | `claude-haiku-4-5-20251001` | Simple search, formatting, trivial transformations, tasks under 2 min |
+| Model | ID | USD / MTok (in / out) | Best for |
+|---|---|---|---|
+| **Opus 4.7** | `claude-opus-4-7` | $5 / $25 | Same niche as 4.6 but with a new tokenizer (see "Opus 4.6 vs 4.7" below). Opt-in until inflation is measured. |
+| **Opus 4.6** | `claude-opus-4-6` | $5 / $25 | Architectural planning, system design, complex trade-off analysis, very hard debugging without a hypothesis. Supports Fast mode ($30 / $150) when latency matters. **Default Opus tier.** |
+| **Sonnet 4.6** | `claude-sonnet-4-6` | $3 / $15 | Implementation, refactoring, code review, debugging with a formed hypothesis — **default for 90% of tasks** |
+| **Haiku 4.5** | `claude-haiku-4-5-20251001` | $1 / $5 | Simple search, formatting, trivial transformations, tasks under 2 min |
+
+Pricing source: https://platform.claude.com/docs/en/about-claude/pricing (last revised 2026-04-16).
 
 ## Principle
 
 > **Start with Sonnet. Scale to Opus only if stuck.**
 
-Opus is ~5x more expensive. Use it with intention.
+Opus is ~**1.67x** more expensive than Sonnet per output token ($25 vs $15). For **Opus 4.7** specifically, Anthropic notes the new tokenizer can produce up to ~**1.35x more tokens** for the same content, so the realistic effective cost vs Sonnet can land around **1.67 × 1.35 ≈ 2.25x** in the worst case. Measure before generalising.
+
+## Opus 4.6 vs 4.7
+
+Both versions are priced identically ($5 / $25) but have different trade-offs:
+
+| Axis | Opus 4.6 | Opus 4.7 |
+|---|---|---|
+| Tokenizer | Known, stable | **New** — up to 1.35x more tokens for the same content |
+| Fast mode | **Yes** — $30 / $150 for lower latency | No |
+| Benchmarks | Baseline | Higher on coding / vision tasks |
+| Cache behavior | Known | Needs measurement |
+
+**Default stance:** stick with **Opus 4.6** for devflow hooks (judge, firewall, instinct capture) and planning work. Flip to 4.7 only after `telemetry/cli.py stats --by-model` shows the effective inflation is acceptable for the workload — see `docs/opus-4-7-policy.md` for the explicit criterion.
+
+**Per-task override:** you can always invoke Claude Code with `--model claude-opus-4-7` for a one-off session without changing the global default.
 
 ## Where Model Selection Matters
 
