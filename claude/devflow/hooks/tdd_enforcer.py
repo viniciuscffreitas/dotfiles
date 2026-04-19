@@ -97,8 +97,10 @@ def find_test_file(impl_path: Path, max_depth: int = 5) -> bool:
             td = root / test_dir
             if td.is_dir():
                 for pattern in [
-                    f"test_{stem}.*", f"{stem}_test.*", f"{stem}.test.*", f"{stem}.spec.*",
-                    f"**/test_{stem}.*", f"**/{stem}_test.*", f"**/{stem}.test.*",
+                    f"test_{stem}.*", f"test_{stem}_*.*",
+                    f"{stem}_test.*", f"{stem}.test.*", f"{stem}.spec.*",
+                    f"**/test_{stem}.*", f"**/test_{stem}_*.*",
+                    f"**/{stem}_test.*", f"**/{stem}.test.*",
                 ]:
                     if list(td.glob(pattern)):
                         return True

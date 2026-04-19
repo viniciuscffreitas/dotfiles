@@ -149,3 +149,34 @@ def test_find_test_file_monorepo(tmp_path):
     test_file = test_dir / "test_handler.py"
     test_file.write_text("def test_handle(): pass")
     assert find_test_file(impl)
+
+
+def test_find_test_file_accepts_split_prefix(tmp_path):
+    """test_store_default_db.py should count as coverage for store.py.
+
+    Why: codebases commonly split tests by concern (e.g., test_store_schema.py,
+    test_store_default_db.py) instead of a monolithic test_store.py. The glob
+    must match any test file starting with `test_{stem}_`.
+    """
+    impl = tmp_path / "store.py"
+    impl.write_text("class Store: pass")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    split = tests_dir / "test_store_default_db.py"
+    split.write_text("def test_default_db(): pass")
+    assert find_test_file(impl)
+
+
+def test_find_test_file_rejects_name_collision(tmp_path):
+    """test_storekeeper.py must NOT count as coverage for store.py.
+
+    Why: the prefix match must preserve a separator (underscore or dot) to avoid
+    matching unrelated files that happen to share a prefix.
+    """
+    impl = tmp_path / "store.py"
+    impl.write_text("class Store: pass")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    unrelated = tests_dir / "test_storekeeper.py"
+    unrelated.write_text("def test_storekeeper(): pass")
+    assert not find_test_file(impl)

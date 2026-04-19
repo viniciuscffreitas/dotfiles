@@ -119,6 +119,31 @@ def test_get_hook_stats_recognizes_instinct_capture_via_count(tmp_path):
     assert result["last_triggered_at"] == ts
 
 
+def test_get_hook_stats_recognizes_pre_task_profiler_via_probability_score(tmp_path):
+    """pre_task_profiler writes probability_score — signal it via that column
+    instead of rules_triggered LIKE (which profiler doesn't self-populate)."""
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    ts = datetime.now(tz=timezone.utc).isoformat()
+    store.record({"task_id": "p1", "probability_score": 0.3, "timestamp": ts})
+    store.record({"task_id": "p2", "probability_score": 0.8, "timestamp": ts})
+    store.record({"task_id": "other"})
+    result = store.get_hook_stats("pre_task_profiler")
+    assert result["last_triggered_at"] == ts
+
+
+def test_get_hook_stats_recognizes_task_boundary_judge_via_verdict(tmp_path):
+    """task_boundary_judge shares judge_verdict signal with post_task_judge —
+    harness_health must surface it as fired, not idle."""
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    ts = datetime.now(tz=timezone.utc).isoformat()
+    store.record({"task_id": "b1", "judge_verdict": "pass", "timestamp": ts})
+    store.record({"task_id": "b2", "judge_verdict": "fail", "timestamp": ts})
+    store.record({"task_id": "other"})
+    result = store.get_hook_stats("task_boundary_judge")
+    assert result["last_triggered_at"] == ts
+    assert result["error_rate"] > 0.0
+
+
 # ---------------------------------------------------------------------------
 # SkillHealth verdict rules
 # ---------------------------------------------------------------------------

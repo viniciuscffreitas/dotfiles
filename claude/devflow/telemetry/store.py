@@ -340,6 +340,14 @@ class TelemetryStore:
             "iterations_to_completion IS NOT NULL",
             None,
         ),
+        "pre_task_profiler": (
+            "probability_score IS NOT NULL",
+            None,
+        ),
+        "task_boundary_judge": (
+            "judge_verdict IS NOT NULL AND judge_verdict != ''",
+            "judge_verdict IN ('fail', 'judge_error')",
+        ),
     }
 
     def get_hook_stats(self, hook_name: str) -> dict:
