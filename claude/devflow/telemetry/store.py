@@ -316,33 +316,82 @@ class TelemetryStore:
         except Exception:
             return {"last_used_at": None, "usage_count": 0}
 
+    # Hooks that populate a dedicated column are recognized via that column,
+    # not via rules_triggered (which hooks rarely self-populate). Each entry is
+    # (presence_clause, fail_clause) — fail_clause=None means "can't derive error".
+    _HOOK_SIGNAL_CLAUSES = {
+        "post_task_judge": (
+            "judge_verdict IS NOT NULL AND judge_verdict != ''",
+            "judge_verdict IN ('fail', 'judge_error')",
+        ),
+        "pre_task_firewall": (
+            "firewall_delegated IS NOT NULL",
+            "firewall_success = 0",
+        ),
+        "cost_tracker": (
+            "(cost_usd IS NOT NULL OR estimated_usd IS NOT NULL)",
+            None,
+        ),
+        "instinct_capture": (
+            "instincts_captured_count IS NOT NULL",
+            None,
+        ),
+        "task_telemetry": (
+            "iterations_to_completion IS NOT NULL",
+            None,
+        ),
+    }
+
     def get_hook_stats(self, hook_name: str) -> dict:
         """
         Returns {"avg_execution_ms": float|None, "error_rate": float, "last_triggered_at": str|None}.
-        Proxies hook activity from rules_triggered and judge_verdict columns.
-        avg_execution_ms is always None (not stored).
+
+        Hooks with dedicated telemetry columns (see _HOOK_SIGNAL_CLAUSES) are
+        recognized via those columns; others fall back to rules_triggered LIKE.
+        avg_execution_ms is always None (not stored today).
         Falls back to zeroes if the store raises.
         """
         try:
+            presence_clause, fail_clause = self._HOOK_SIGNAL_CLAUSES.get(
+                hook_name, (None, None)
+            )
+            if presence_clause is None:
+                presence_clause = "rules_triggered LIKE ?"
+                args = (f"%{hook_name}%",)
+                fail_sql = (
+                    "SELECT COUNT(*) FROM task_executions "
+                    "WHERE rules_triggered LIKE ? AND judge_verdict = 'fail'"
+                )
+                fail_args = args
+            else:
+                args = ()
+                if fail_clause:
+                    fail_sql = (
+                        f"SELECT COUNT(*) FROM task_executions "
+                        f"WHERE ({presence_clause}) AND ({fail_clause})"
+                    )
+                    fail_args = ()
+                else:
+                    fail_sql = None
+                    fail_args = ()
+
             with closing(self._connect()) as conn:
                 last_row = conn.execute(
-                    "SELECT MAX(timestamp) FROM task_executions "
-                    "WHERE rules_triggered LIKE ?",
-                    (f"%{hook_name}%",),
+                    f"SELECT MAX(timestamp) FROM task_executions WHERE {presence_clause}",
+                    args,
                 ).fetchone()
                 total_row = conn.execute(
-                    "SELECT COUNT(*) FROM task_executions "
-                    "WHERE rules_triggered LIKE ?",
-                    (f"%{hook_name}%",),
+                    f"SELECT COUNT(*) FROM task_executions WHERE {presence_clause}",
+                    args,
                 ).fetchone()
-                fail_row = conn.execute(
-                    "SELECT COUNT(*) FROM task_executions "
-                    "WHERE rules_triggered LIKE ? AND judge_verdict = 'fail'",
-                    (f"%{hook_name}%",),
-                ).fetchone()
+                if fail_sql is not None:
+                    fail_row = conn.execute(fail_sql, fail_args).fetchone()
+                    failed = fail_row[0] or 0
+                else:
+                    failed = 0
+
             total = total_row[0] or 0
-            failed = fail_row[0] or 0
-            error_rate = (failed / total) if total > 0 else 0.0
+            error_rate = (failed / total) if (total > 0 and fail_sql is not None) else 0.0
             return {
                 "avg_execution_ms": None,
                 "error_rate": error_rate,

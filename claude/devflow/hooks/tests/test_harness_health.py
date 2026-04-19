@@ -73,6 +73,52 @@ def test_get_hook_stats_computes_error_rate_from_records(tmp_path):
     assert result["avg_execution_ms"] is None
 
 
+def test_get_hook_stats_recognizes_post_task_judge_via_verdict(tmp_path):
+    """post_task_judge doesn't populate rules_triggered — its invocations are
+    recognizable by judge_verdict being non-null."""
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    ts = datetime.now(tz=timezone.utc).isoformat()
+    store.record({"task_id": "j1", "judge_verdict": "pass", "timestamp": ts})
+    store.record({"task_id": "j2", "judge_verdict": "fail", "timestamp": ts})
+    store.record({"task_id": "j3", "judge_verdict": "judge_error", "timestamp": ts})
+    store.record({"task_id": "other1"})  # unrelated row
+    result = store.get_hook_stats("post_task_judge")
+    assert result["last_triggered_at"] == ts
+    # judge_error + fail both count as "not pass/warn"
+    assert result["error_rate"] > 0.0
+
+
+def test_get_hook_stats_recognizes_pre_task_firewall_via_column(tmp_path):
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    ts = datetime.now(tz=timezone.utc).isoformat()
+    store.record({"task_id": "f1", "firewall_delegated": True, "firewall_success": True, "timestamp": ts})
+    store.record({"task_id": "f2", "firewall_delegated": True, "firewall_success": False, "timestamp": ts})
+    store.record({"task_id": "other"})
+    result = store.get_hook_stats("pre_task_firewall")
+    assert result["last_triggered_at"] == ts
+    assert abs(result["error_rate"] - 0.5) < 0.01
+
+
+def test_get_hook_stats_recognizes_cost_tracker_via_column(tmp_path):
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    ts = datetime.now(tz=timezone.utc).isoformat()
+    store.record({"task_id": "c1", "cost_usd": 0.02, "timestamp": ts})
+    store.record({"task_id": "c2", "estimated_usd": 0.05, "timestamp": ts})
+    store.record({"task_id": "other"})
+    result = store.get_hook_stats("cost_tracker")
+    assert result["last_triggered_at"] == ts
+
+
+def test_get_hook_stats_recognizes_instinct_capture_via_count(tmp_path):
+    store = TelemetryStore(db_path=tmp_path / "test.db")
+    ts = datetime.now(tz=timezone.utc).isoformat()
+    store.record({"task_id": "i1", "instincts_captured_count": 2, "timestamp": ts})
+    store.record({"task_id": "i2", "instincts_captured_count": 0, "timestamp": ts})
+    store.record({"task_id": "other"})
+    result = store.get_hook_stats("instinct_capture")
+    assert result["last_triggered_at"] == ts
+
+
 # ---------------------------------------------------------------------------
 # SkillHealth verdict rules
 # ---------------------------------------------------------------------------
