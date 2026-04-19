@@ -3,6 +3,7 @@ state/
 .pytest_cache/
 .coverage
 telemetry/devflow.db
+telemetry/devflow.db.bak-*
 telemetry/secrets_blocked.log
 telemetry/sessions.jsonl
 telemetry/boundary_worker.log
