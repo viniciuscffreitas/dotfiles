@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 
 
@@ -156,13 +157,27 @@ class HarnessJudge:
                 ["claude", "-p", prompt, "--model", self.model, "--output-format", "text"],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=180,
                 env={**os.environ, "DEVFLOW_JUDGE_SUBPROCESS": "1"},
             )
             if result.returncode != 0:
+                stderr_tail = (result.stderr or "").strip().splitlines()[-3:]
+                print(
+                    f"[judge] subprocess exited {result.returncode}: "
+                    f"{' | '.join(stderr_tail) or '<no stderr>'}",
+                    file=sys.stderr,
+                )
                 return _skipped()
             return self._parse_result(result.stdout, task_id=payload.task_id)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            print(
+                f"[judge] subprocess timeout after {exc.timeout}s",
+                file=sys.stderr,
+            )
             return _skipped()
-        except Exception:
+        except Exception as exc:
+            print(
+                f"[judge] subprocess failed: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
             return _skipped()

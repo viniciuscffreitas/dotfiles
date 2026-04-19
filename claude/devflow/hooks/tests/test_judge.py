@@ -253,6 +253,38 @@ class TestEvaluate:
             result = self.judge.evaluate(self.payload)
         assert result.verdict == "skipped"
 
+    def test_subprocess_timeout_is_180_seconds(self):
+        with patch("judge.evaluator.subprocess.run") as mock_run:
+            mock_run.return_value = self._mock_ok()
+            self.judge.evaluate(self.payload)
+        assert mock_run.call_args.kwargs.get("timeout") == 180
+
+    def test_nonzero_exit_logs_to_stderr(self, capsys):
+        with patch("judge.evaluator.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1, stdout="", stderr="Anthropic API: rate_limit_exceeded"
+            )
+            self.judge.evaluate(self.payload)
+        err = capsys.readouterr().err
+        assert "[judge]" in err
+        assert "rate_limit_exceeded" in err
+
+    def test_timeout_logs_to_stderr(self, capsys):
+        with patch("judge.evaluator.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd=["claude"], timeout=180)
+            self.judge.evaluate(self.payload)
+        err = capsys.readouterr().err
+        assert "[judge]" in err
+        assert "timeout" in err.lower()
+
+    def test_unexpected_exception_logs_to_stderr(self, capsys):
+        with patch("judge.evaluator.subprocess.run") as mock_run:
+            mock_run.side_effect = RuntimeError("boom")
+            self.judge.evaluate(self.payload)
+        err = capsys.readouterr().err
+        assert "[judge]" in err
+        assert "boom" in err
+
 
 # ---------------------------------------------------------------------------
 # Verdict mapping from JSON flags
