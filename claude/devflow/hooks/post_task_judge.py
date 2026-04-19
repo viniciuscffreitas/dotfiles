@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 _DEVFLOW_ROOT = Path(__file__).parent.parent
@@ -185,6 +186,9 @@ def run(state_dir: Path) -> int:
         try:
             store.record({
                 "task_id": task_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "session_id": task_id,
+                "oversight_level": oversight_level,
                 "judge_verdict": verdict,
                 "judge_categories_failed": json.dumps(result.fail_reasons),
                 "lob_violations": 1 if result.lob_violation else 0,

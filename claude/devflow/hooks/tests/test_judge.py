@@ -490,6 +490,38 @@ class TestPostTaskJudgeHook:
         payload = mock_store.record.call_args[0][0]
         assert payload["judge_verdict"] == "warn"
 
+    def test_telemetry_record_populates_timestamp_and_session(self, tmp_path):
+        """Records must carry timestamp + session_id — otherwise cli stats
+        can't query by time and get_hook_stats can't compute last_triggered_at."""
+        from datetime import datetime, timezone
+
+        m = self._hook_module()
+        self._write_risk_profile(tmp_path, "standard")
+        mock_store = MagicMock()
+        with patch.object(m, "_get_diff", return_value=""), \
+             patch("post_task_judge.HarnessJudge") as mock_judge_cls, \
+             patch("post_task_judge.JudgeRouter") as mock_router_cls, \
+             patch("post_task_judge.TelemetryStore", return_value=mock_store), \
+             patch("post_task_judge.get_session_id", return_value="sess-abc-123"), \
+             patch("post_task_judge._is_already_judged", return_value=False):
+            mock_judge = MagicMock()
+            mock_judge.evaluate.return_value = _make_result("pass")
+            mock_judge_cls.return_value = mock_judge
+            mock_router = MagicMock()
+            mock_router.should_run.return_value = True
+            mock_router.handle.return_value = 0
+            mock_router_cls.return_value = mock_router
+            before = datetime.now(timezone.utc)
+            m.run(tmp_path)
+            after = datetime.now(timezone.utc)
+
+        payload = mock_store.record.call_args[0][0]
+        assert "timestamp" in payload, "telemetry row missing timestamp"
+        ts = datetime.fromisoformat(payload["timestamp"])
+        assert before <= ts <= after, "timestamp outside expected window"
+        assert payload.get("session_id") == "sess-abc-123"
+        assert payload.get("oversight_level") == "standard"
+
     def test_defaults_to_standard_when_no_risk_profile(self, tmp_path):
         m = self._hook_module()
         # No risk-profile.json written
