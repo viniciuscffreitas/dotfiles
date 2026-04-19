@@ -6,6 +6,7 @@ Default DB path: ~/.claude/devflow/telemetry/devflow.db
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 import time
@@ -16,6 +17,18 @@ from typing import Callable, Optional
 
 _TELEMETRY_DIR = Path.home() / ".claude" / "devflow" / "telemetry"
 _DEFAULT_DB = _TELEMETRY_DIR / "devflow.db"
+
+
+def _resolve_default_db() -> Path:
+    """Resolve the default DB path at call time.
+
+    Honors DEVFLOW_TELEMETRY_DB so tests (and power-users) can redirect writes
+    away from the production store. Resolved per-call — not cached — so pytest
+    fixtures that set the env var via monkeypatch work even after the module
+    has already been imported.
+    """
+    override = os.environ.get("DEVFLOW_TELEMETRY_DB")
+    return Path(override) if override else _DEFAULT_DB
 
 _COLUMNS = [
     "task_id", "timestamp", "task_category", "task_description", "stack",
@@ -108,7 +121,7 @@ class TelemetryStore:
     """Thread-safe SQLite store for devflow task telemetry."""
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
-        self._db_path = Path(db_path) if db_path else _DEFAULT_DB
+        self._db_path = Path(db_path) if db_path else _resolve_default_db()
         self._lock = threading.Lock()
         self._init_schema()
 
