@@ -1,6 +1,13 @@
 # Gerado localmente por install.sh
 claude/settings.json
 
+# Runtime flags / caches / backups — gerados em runtime
+claude/.caveman-active
+claude/mcp-needs-auth-cache.json
+claude/settings.json.bak
+claude/plugins/cache/
+claude/plugins/.gcs-sha
+
 # Dados sensíveis — nunca commitar
 claude/memory/
 claude/cache/
