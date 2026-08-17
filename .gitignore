@@ -1,14 +1,27 @@
 # Gerado localmente por install.sh
 claude/settings.json
 
-# Runtime flags / caches / backups — gerados em runtime
-claude/.caveman-active
-claude/mcp-needs-auth-cache.json
-claude/settings.json.bak
+# Backups locais de config — ruido, nao versionar
+claude/settings.json.bak*
+claude/settings.json.pre-*
+claude/settings.template.json.pre-*
+.gitignore.pre-*
+
+# Plugins: marketplaces e caches sao baixados/regenerados pelo Claude Code.
+# installed_plugins.json e known_marketplaces.json ficam versionados de proposito —
+# sao a lista do que reinstalar numa maquina nova.
+claude/plugins/marketplaces/
 claude/plugins/cache/
+claude/plugins/data/
+claude/plugins/blocklist.json
+claude/plugins/plugin-catalog-cache.json
+claude/plugins/install-counts-cache.json
 claude/plugins/.gcs-sha
 
-# Dados sensíveis — nunca commitar
+# Runtime flags / caches
+claude/mcp-needs-auth-cache.json
+
+# Dados sensiveis / volumosos — nunca commitar
 claude/memory/
 claude/cache/
 claude/statsig/
@@ -31,8 +44,28 @@ claude/image-cache/
 claude/file-history/
 claude/session-env/
 claude/backups/
-claude/plugins/data/
-claude/plugins/install-counts-cache.json
+
+# Skills instaladas por ferramenta (regeneraveis: `gitnexus setup -c claude`)
+claude/skills/gitnexus-*/
+
+# Archives locais — historico morto, nao precisa viajar entre maquinas
+claude/skills-archive/
+claude/hooks-archive/
+claude/commands-archived/
+claude/devflow-lite/
+
+# Estado de runtime
+claude/daemon/
+claude/jobs/
+claude/docs/
+claude/.last-cleanup
+claude/.last-update-result.json
+claude/plugins/.last_inuse_sweep
+
+# Caches de ferramenta
+.pytest_cache/
+.ruff_cache/
+__pycache__/
 
 # Secrets
 **/.env

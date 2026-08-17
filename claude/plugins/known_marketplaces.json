@@ -5,22 +5,14 @@
       "repo": "anthropics/claude-plugins-official"
     },
     "installLocation": "/Users/vini/.claude/plugins/marketplaces/claude-plugins-official",
-    "lastUpdated": "2026-03-18T16:01:51.703Z"
+    "lastUpdated": "2026-08-17T02:26:29.530Z"
   },
-  "claude-code-plugins": {
+  "devloop-local": {
     "source": {
-      "source": "github",
-      "repo": "anthropics/claude-code"
+      "source": "directory",
+      "path": "/Users/vini/Developer/devloop-plugin-src"
     },
-    "installLocation": "/Users/vini/.claude/plugins/marketplaces/claude-code-plugins",
-    "lastUpdated": "2026-03-17T12:56:01.667Z"
-  },
-  "firebase": {
-    "source": {
-      "source": "github",
-      "repo": "firebase/agent-skills"
-    },
-    "installLocation": "/Users/vini/.claude/plugins/marketplaces/firebase",
-    "lastUpdated": "2026-03-05T02:10:47.807Z"
+    "installLocation": "/Users/vini/Developer/devloop-plugin-src",
+    "lastUpdated": "2026-08-16T16:39:08.987Z"
   }
 }
