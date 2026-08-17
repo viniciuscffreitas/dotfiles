@@ -53,6 +53,7 @@ claude/skills-archive/
 claude/hooks-archive/
 claude/commands-archived/
 claude/devflow-lite/
+claude/trash-*/
 
 # Estado de runtime
 claude/daemon/
