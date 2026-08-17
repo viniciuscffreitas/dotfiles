@@ -1,7 +1,7 @@
 #!/bin/bash
 # Tools status + rebuild helper for token-saving stack.
 # Usage:
-#   tools-status.sh                  # print status of CRG + CodeSight + Caveman in cwd
+#   tools-status.sh                  # print status of CRG + CodeSight in cwd
 #   tools-status.sh rebuild          # force rebuild CRG + CodeSight wiki
 #   tools-status.sh clean            # wipe .code-review-graph + .codesight (CAREFUL)
 
@@ -14,13 +14,6 @@ line() { printf '\n=== %s ===\n' "$1"; }
 
 case "$CMD" in
   status)
-    line "Caveman (global)"
-    if [ -f "$HOME/.claude/.caveman-active" ]; then
-      printf 'mode: %s\n' "$(cat "$HOME/.claude/.caveman-active")"
-    else
-      echo 'flag missing (SessionStart hook not run or disabled)'
-    fi
-
     line "code-review-graph ($REPO)"
     if [ -d "$REPO/.code-review-graph" ]; then
       uvx --from code-review-graph code-review-graph status 2>/dev/null || echo 'status failed'

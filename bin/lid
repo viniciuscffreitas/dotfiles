@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# lid — keep the Mac running with the display closed.
+#
+# Closing the lid triggers "clamshell sleep", which suspends every process:
+# builds, test runs, agent sessions, ssh connections. `caffeinate` does NOT
+# prevent it — caffeinate only blocks *idle* sleep, so it is useless here.
+# The only switch that stops clamshell sleep is the system-wide SleepDisabled
+# flag, set through `pmset -a disablesleep`.
+#
+#   lid on [duration]   stay awake with the lid closed. Optional duration
+#                       (30m, 2h, 90) auto-reverts, so a Mac left in a bag
+#                       does not run hot until the battery dies.
+#   lid off             restore normal sleep, cancel any pending auto-revert.
+#   lid status          current state, power source, battery.
+#
+# SleepDisabled survives reboot, so `lid on` without a duration stays on until
+# something turns it off. Prefer a duration.
+
+set -euo pipefail
+
+STATE_DIR="${HOME}/.local/state/lid"
+TIMER_PID_FILE="${STATE_DIR}/timer.pid"
+
+die() { printf 'lid: %s\n' "$*" >&2; exit 1; }
+
+sleep_disabled() {
+  pmset -g | awk '/SleepDisabled/ { print $2; exit }'
+}
+
+on_battery() {
+  pmset -g batt | grep -q "'Battery Power'"
+}
+
+# "90" -> 90, "30m" -> 1800, "2h" -> 7200
+to_seconds() {
+  local d="$1"
+  case "$d" in
+    *[0-9]s) printf '%s' "${d%s}" ;;
+    *[0-9]m) printf '%s' "$(( ${d%m} * 60 ))" ;;
+    *[0-9]h) printf '%s' "$(( ${d%h} * 3600 ))" ;;
+    *[0-9])  printf '%s' "$(( d * 60 ))" ;;
+    *) die "cannot parse duration '$d' (use 90, 30m, 2h)" ;;
+  esac
+}
+
+cancel_timer() {
+  [[ -f "$TIMER_PID_FILE" ]] || return 0
+  local pid
+  pid="$(cat "$TIMER_PID_FILE")"
+  # Only kill it if it is still the auto-revert timer and not a recycled pid.
+  if kill -0 "$pid" 2>/dev/null && ps -o command= -p "$pid" | grep -q 'lid-timer'; then
+    kill "$pid" 2>/dev/null || true
+  fi
+  rm -f "$TIMER_PID_FILE"
+}
+
+cmd_on() {
+  local duration="${1:-}" secs=""
+  [[ -n "$duration" ]] && secs="$(to_seconds "$duration")"
+
+  # The auto-revert runs unattended hours from now, so it cannot answer a
+  # password prompt. Prove the exact command it will run needs no password.
+  # `sudo -n true` is not a stand-in: it also passes on a warm sudo timestamp
+  # and on the blanket %admin rule, neither of which still holds by then.
+  # Running `disablesleep 0` as the probe is free — the next line sets it to 1.
+  if [[ -n "$secs" ]] && ! sudo -n /usr/bin/pmset -a disablesleep 0 2>/dev/null; then
+    die "auto-revert needs a passwordless sudo rule, otherwise the timer fires
+     into a password prompt nobody answers and the Mac never sleeps again.
+     Install it once:
+       sudo install -m 440 -o root -g wheel \\
+         ${HOME}/dotfiles/etc/lid-nopasswd /etc/sudoers.d/lid
+     Or run 'lid on' with no duration and 'lid off' by hand."
+  fi
+
+  sudo pmset -a disablesleep 1
+  cancel_timer
+
+  if [[ -n "$secs" ]]; then
+    mkdir -p "$STATE_DIR"
+    # Detached so it survives this terminal closing. `lid-timer` in argv is what
+    # cancel_timer matches on, to avoid killing an unrelated recycled pid.
+    nohup bash -c "exec -a lid-timer bash -c 'sleep $secs; sudo -n pmset -a disablesleep 0'" \
+      >/dev/null 2>&1 &
+    echo $! > "$TIMER_PID_FILE"
+    disown
+    printf 'lid: awake with the lid closed, reverting in %s\n' "$duration"
+  else
+    printf 'lid: awake with the lid closed, no time limit — run `lid off` when done\n'
+  fi
+
+  if on_battery; then
+    printf 'lid: on battery. A closed Mac that never sleeps runs hot and drains fast.\n'
+    printf '     Plug it in, or keep the lid open a crack for airflow.\n'
+  fi
+}
+
+cmd_off() {
+  cancel_timer
+  sudo pmset -a disablesleep 0
+  printf 'lid: normal sleep restored\n'
+}
+
+cmd_status() {
+  local disabled
+  disabled="$(sleep_disabled)"
+  if [[ "$disabled" == "1" ]]; then
+    printf 'lid: ON — stays running with the lid closed\n'
+    if [[ -f "$TIMER_PID_FILE" ]] && kill -0 "$(cat "$TIMER_PID_FILE")" 2>/dev/null; then
+      printf 'lid: auto-revert timer is armed\n'
+    else
+      printf 'lid: no auto-revert armed, stays on until `lid off`\n'
+    fi
+  else
+    printf 'lid: OFF — closing the lid suspends everything\n'
+  fi
+  pmset -g batt | tail -n1
+}
+
+case "${1:-status}" in
+  on)     shift; cmd_on "${1:-}" ;;
+  off)    cmd_off ;;
+  status) cmd_status ;;
+  *) die "usage: lid {on [30m|2h] | off | status}" ;;
+esac

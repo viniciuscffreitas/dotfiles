@@ -1,4 +1,13 @@
 {
+  "skillListingBudgetFraction": 0.04,
+  "env": {
+    "CLAUDE_CODE_NO_FLICKER": "1",
+    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_RESUME_INTERRUPTED_TURN": "1",
+    "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
+    "OP_SERVICE_ACCOUNT_TOKEN": "__OP_SERVICE_ACCOUNT_TOKEN__"
+  },
   "permissions": {
     "allow": [
       "Bash(gh pr list:*)",
@@ -45,8 +54,6 @@
       "Bash(grep:*)",
       "Bash(./mvnw compile test-compile:*)",
       "Bash(ls:*)",
-      "mcp__plugin_linear_linear__list_teams",
-      "mcp__plugin_linear_linear__list_issues",
       "Bash(mvn verify:*)",
       "Bash(flutter build web:*)",
       "Bash(gh repo list:*)",
@@ -71,26 +78,34 @@
       "Bash(git -C:*)",
       "Bash(git -C __HOME__/Desktop/cb push -u origin feat/p2-16-os-history-per-pet)",
       "Bash(git restore:*)",
-      "mcp__plugin_linear_linear__list_projects",
       "Bash(git rebase:*)",
       "Bash(done)",
       "Bash(gh search:*)",
-      "mcp__plugin_linear_linear__get_team",
       "Bash(npm install:*)",
       "Bash(linear auth:*)",
       "Bash(npx:*)",
       "Bash(wc:*)"
     ],
+    "deny": [
+      "Agent(Explore)"
+    ],
     "defaultMode": "bypassPermissions"
+  },
+  "model": "opus",
+  "skillOverrides": {
+    "vini-dream": "off",
+    "vini-unknowns": "off"
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Grep|Glob|Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __HOME__/.local/share/dippy/bin/dippy-hook"
+            "command": "node \"__HOME__/.claude/hooks/gitnexus/gitnexus-hook.cjs\"",
+            "timeout": 10,
+            "statusMessage": "Enriching with GitNexus graph context..."
           }
         ]
       },
@@ -99,7 +114,25 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __HOME__/.claude/devflow/hooks/pre_push_gate.py"
+            "command": "python3 __HOME__/Developer/vini-personal/hooks/momease_prod_guard.py"
+          }
+        ]
+      },
+      {
+        "matcher": "slack_send_message$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/Developer/vini-personal/hooks/slack_draft_guard.py"
+          }
+        ]
+      },
+      {
+        "matcher": "save_comment$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/Developer/vini-personal/hooks/linear_comment_gate.py"
           }
         ]
       }
@@ -110,7 +143,25 @@
         "hooks": [
           {
             "type": "command",
-            "command": "# sounds.sh: soundsh/minecraft-villager-hmm\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-villager-hmm.mp3\""
+            "command": "# sounds.sh: soundsh/minecraft-villager-hmm\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-villager-hmm.mp3\"",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/Developer/vini-personal/hooks/prompt_preamble.py"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__HOME__/Developer/agent-tab-title/bin/agent-tab-title.js\" claude"
           }
         ]
       }
@@ -121,64 +172,50 @@
         "hooks": [
           {
             "type": "command",
-            "command": "# sounds.sh: soundsh/minecraft-hurt\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-hurt.mp3\""
+            "command": "# sounds.sh: soundsh/minecraft-hurt\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-hurt.mp3\"",
+            "async": true
           }
         ]
-      }
-    ],
-    "TaskCompleted": [
+      },
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "# sounds.sh: soundsh/minecraft-eating\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-eating.mp3\""
+            "command": "node \"__HOME__/Developer/agent-tab-title/bin/agent-tab-title.js\" claude"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __HOME__/.claude/devflow/hooks/file_checker.py"
-          },
-          {
-            "type": "command",
-            "command": "python3 __HOME__/.claude/devflow/hooks/tdd_enforcer.py"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 __HOME__/.claude/devflow/hooks/pre_compact.py"
+            "command": "node \"__HOME__/.claude/hooks/gitnexus/gitnexus-hook.cjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking GitNexus index freshness..."
           }
         ]
       }
     ],
     "SessionStart": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __HOME__/.claude/devflow/hooks/discovery_scan.py"
+            "command": "pgrep -f 'gitnexus mcp' | while read -r p; do [ \"$(ps -o ppid= -p \"$p\" 2>/dev/null | tr -d ' ')\" = \"1\" ] && kill -9 \"$p\" 2>/dev/null; done; true",
+            "timeout": 10,
+            "statusMessage": "Reaping orphaned gitnexus MCP processes...",
+            "async": true
           }
         ]
       },
       {
-        "matcher": "compact",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __HOME__/.claude/devflow/hooks/post_compact_restore.py"
+            "command": "node \"__HOME__/Developer/agent-tab-title/bin/agent-tab-title.js\" claude"
           }
         ]
       }
@@ -189,60 +226,51 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 __HOME__/.claude/devflow/hooks/spec_stop_guard.py"
+            "command": "# sounds.sh: soundsh/minecraft-eating\nafplay \"__HOME__/.claude/sounds/soundsh--minecraft-eating.mp3\"",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/Developer/vini-personal/hooks/verification_before_completion.py"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__HOME__/Developer/agent-tab-title/bin/agent-tab-title.js\" claude"
           }
         ]
       }
     ]
   },
-  "statusLine": {
-    "type": "command",
-    "command": "ccline",
-    "padding": 0
-  },
   "enabledPlugins": {
-    "pr-review-toolkit@claude-plugins-official": true,
-    "explanatory-output-style@claude-plugins-official": true,
-    "swift-lsp@claude-plugins-official": true,
-    "linear@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true,
-    "pr-review-toolkit@claude-code-plugins": true,
-    "firebase@firebase": true,
-    "rust-analyzer-lsp@claude-plugins-official": true
+    "devloop@devloop-local": true
   },
   "extraKnownMarketplaces": {
-    "firebase": {
+    "devloop-local": {
       "source": {
-        "source": "github",
-        "repo": "firebase/agent-skills"
+        "source": "directory",
+        "path": "__HOME__/Developer/devloop-plugin-src"
       }
     }
   },
-  "language": "Português Brasileiro",
-  "effortLevel": "medium",
+  "language": "pt-BR — português do Brasil. NUNCA português de Portugal: use 'você', gerúndio ('estou fazendo', nunca 'estou a fazer'), e o léxico brasileiro (tela/arquivo/usuário/time/celular/trem, nunca ecrã/ficheiro/utilizador/equipa/telemóvel/comboio).",
+  "effortLevel": "xhigh",
+  "voice": {
+    "enabled": true,
+    "mode": "hold"
+  },
   "skipDangerousModePermissionPrompt": true,
-  "mcpServers": {
-    "mixpanel": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote",
-        "https://mcp.mixpanel.com/mcp"
-      ]
-    }
-  },
-  "linear": {
-    "apiKey": "__LINEAR_API_KEY__"
-  },
-  "env": {
-    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
-    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
-    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
-    "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
-    "MAX_THINKING_TOKENS": "8000"
-  },
-  "contextCompactionThreshold": 80,
-  "model": "sonnet"
+  "remoteControlAtStartup": false,
+  "agentPushNotifEnabled": true,
+  "voiceEnabled": true,
+  "contextCompactionThreshold": 80
 }

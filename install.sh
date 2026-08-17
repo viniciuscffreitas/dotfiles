@@ -37,12 +37,20 @@ done
 mkdir -p "$HOME/.claude/plugins/cache"
 echo "  diretórios locais criados"
 
-# Gerar settings.json a partir do template
-if [ -f "$DOTFILES_DIR/claude/settings.template.json" ]; then
-  sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/claude/settings.template.json" > "$HOME/.claude/settings.json"
-  echo "  settings.json gerado para $HOME"
-else
+# Gerar settings.json a partir do template.
+# settings.json é gitignored e evolui na máquina (skillOverrides, hooks, budgets),
+# então uma config existente é a fonte de verdade — o template só semeia máquina nova.
+SETTINGS="$HOME/.claude/settings.json"
+if [ ! -f "$DOTFILES_DIR/claude/settings.template.json" ]; then
   echo "  WARN: settings.template.json não encontrado"
+elif [ -f "$SETTINGS" ]; then
+  cp "$SETTINGS" "$SETTINGS.backup.$(date +%Y%m%d%H%M%S)"
+  echo "  settings.json já existe — preservado (backup criado)"
+  echo "         para semear do template: rm $SETTINGS && ./install.sh"
+else
+  sed "s|__HOME__|$HOME|g" "$DOTFILES_DIR/claude/settings.template.json" > "$SETTINGS"
+  echo "  settings.json gerado para $HOME"
+  echo "         AÇÃO: preencha os placeholders __OP_SERVICE_ACCOUNT_TOKEN__ etc."
 fi
 
 # --- Shell ---

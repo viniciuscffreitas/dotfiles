@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# wt-gc-all — run wt-gc across every repo that accumulates agent worktrees.
+#
+# Conservative by design: --min-age-days 7 means anything touched in the last
+# week is left alone, so an in-flight branch is never collected out from under
+# a running session. Logs to ~/Library/Logs/wt-gc.log.
+
+set -uo pipefail
+
+unset GIT_DIR GIT_WORK_TREE
+
+REPOS=(
+  /Users/vini/Developer/momease/mom-ease
+  /Users/vini/Developer/momease/momease-backend
+  /Users/vini/Developer/momease/mom-ease-theme-manager
+  /Users/vini/Developer/schoolsout/schools-out
+  /Users/vini/Developer/schoolsout/fe-next-app
+  /Users/vini/Developer/schoolsout/temporal-crawler
+  /Users/vini/Developer/schoolsout/claude-camps-crawler
+  /Users/vini/Developer/schoolsout/agentic-booking-demo
+  /Users/vini/Developer/schoolsout/rollcall
+)
+
+MIN_AGE_DAYS="${WT_GC_MIN_AGE_DAYS:-7}"
+MODE="${1:---apply}"
+LOG="$HOME/Library/Logs/wt-gc.log"
+mkdir -p "$(dirname "$LOG")"
+
+{
+  echo "=== wt-gc-all $(date '+%Y-%m-%d %H:%M:%S') mode=$MODE min-age=${MIN_AGE_DAYS}d ==="
+  df -h /System/Volumes/Data | tail -1
+
+  for repo in "${REPOS[@]}"; do
+    [ -d "$repo" ] || { echo "skip (missing): $repo"; continue; }
+    echo
+    echo "--- $repo ---"
+    if [ "$MODE" = "--apply" ]; then
+      /Users/vini/dotfiles/bin/wt-gc "$repo" --min-age-days "$MIN_AGE_DAYS" --apply 2>&1 | tail -5
+    else
+      /Users/vini/dotfiles/bin/wt-gc "$repo" --min-age-days "$MIN_AGE_DAYS" 2>&1 | tail -5
+    fi
+  done
+
+  echo
+  df -h /System/Volumes/Data | tail -1
+  echo "=== end ==="
+} >> "$LOG" 2>&1
+
+tail -40 "$LOG"

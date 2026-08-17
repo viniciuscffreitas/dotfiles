@@ -1,0 +1,5 @@
+# Allows `lid` to flip clamshell sleep without a password prompt.
+# Scoped to exactly these two commands - no other pmset arguments are allowed,
+# so this grants no ability to run anything else as root.
+vini ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1
+vini ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0

@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# tmp-gc — collect the project scratch directories that pile up in /private/tmp.
+#
+# macOS only sweeps /private/tmp from a periodic job that runs at 03:00, so a
+# laptop that sleeps at night never runs it and the directory grows without
+# bound. This does the sweep on evidence instead of on a timer.
+#
+# Two kinds of thing live there and they get different treatment:
+#
+#   CI caches      GRADLE_USER_HOME, PUB_CACHE, CP_HOME_DIR and friends, pointed
+#                  at /private/tmp on purpose by the workflows so the self-hosted
+#                  runner never writes into the real HOME. They are collectable
+#                  once stale, but never while a job is running.
+#   agent worktrees mktemp -d scratch clones. Removed only when git proves they
+#                  hold nothing: clean tree, nothing unpushed.
+#
+# Anything else in /private/tmp is left alone. Dry run by default.
+#
+# Usage: tmp-gc [--apply] [--min-age-days N]
+
+set -uo pipefail
+
+unset GIT_DIR GIT_WORK_TREE
+
+APPLY=0
+MIN_AGE_DAYS=7
+TMPDIR_ROOT=/private/tmp
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply)        APPLY=1 ;;
+    --min-age-days) shift; MIN_AGE_DAYS="$1" ;;
+    *) echo "unknown flag: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# Only these prefixes are ever considered. An allowlist rather than a denylist:
+# /private/tmp also holds live session state (claude-*), editor sockets and
+# system scratch, and none of that should depend on remembering to exclude it.
+PREFIXES="momease- mom-ease- mom64- schoolsout- schools-out- fe-next-app- gitnexus-npm-cache"
+
+# lsof is a snapshot: a build opens and closes files constantly, so a directory
+# that looks idle this second may be written to the next. It is used as a hard
+# veto, never as proof that something is free.
+IN_USE="$(lsof -w 2>/dev/null | grep -oE '/private/tmp/[^/ ]+' | sort -u)"
+
+is_in_use() {
+  printf '%s\n' "$IN_USE" | grep -qxF "$TMPDIR_ROOT/$1"
+}
+
+# The runner is the only thing that writes the CI cache directories, so while any
+# job is alive every one of them is off limits regardless of what lsof shows.
+ci_busy=0
+pgrep -x Runner.Worker >/dev/null 2>&1 && ci_busy=1
+
+# Only a directory whose name marks it as a tool cache may be deleted for being
+# stale. Everything else has to prove itself through git. Without this, a scratch
+# copy of the source tree that was never a repo reads as "not git, so cache".
+is_ci_cache() {
+  case "$1" in
+    *-gha-*|*-actions-*|*-cache|*-sdk|*-home|*-config|*-gitconfig) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+human() { awk -v k="$1" 'BEGIN{ if (k>1048576) printf "%.1fG", k/1048576; else printf "%.0fM", k/1024 }'; }
+
+matches_prefix() {
+  local b="$1"
+  for p in $PREFIXES; do
+    case "$b" in "$p"*) return 0 ;; esac
+  done
+  return 1
+}
+
+# A checkout of a third-party SDK is a download, not work. The runner clones the
+# Flutter SDK into /private/tmp so it can write to it, which makes it look like a
+# git checkout to every test below; judging it as work would pin gigabytes here
+# forever.
+is_vendor_checkout() {
+  local url
+  url="$(git -C "$1" remote get-url origin 2>/dev/null)"
+  case "$url" in
+    *flutter/flutter*|*dart-lang/*|*github.com/cocoapods/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Same contract as wt-gc: a checkout is only collectable when git can prove the
+# work in it exists somewhere else.
+git_is_collectable() {
+  local d="$1" upstream ahead ref
+  [ -n "$(git -C "$d" status --porcelain 2>/dev/null | head -1)" ] && return 1
+
+  # Without --quiet this fails loudly when there is no upstream. With it, git
+  # echoes the literal "@{upstream}" back and every later test reads as a pass.
+  if upstream="$(git -C "$d" rev-parse --abbrev-ref "@{upstream}" 2>/dev/null)" && [ -n "$upstream" ]; then
+    ahead="$(git -C "$d" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 1)"
+    [ "${ahead:-1}" -eq 0 ] && return 0
+    return 1
+  fi
+
+  # No upstream is the normal state for a scratch checkout parked at a detached
+  # HEAD. That is still collectable when the commit already exists upstream.
+  for ref in origin/develop origin/main origin/master; do
+    git -C "$d" merge-base --is-ancestor HEAD "$ref" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+printf "%-9s %8s %5s  %-42s %s\n" "VERDICT" "SIZE" "AGE" "DIR" "REASON"
+printf '%s\n' "----------------------------------------------------------------------------------------"
+
+FREED=0; KEPT=0
+DEL_LIST=()
+
+for d in "$TMPDIR_ROOT"/*/; do
+  d="${d%/}"
+  [ -d "$d" ] || continue
+  b="$(basename "$d")"
+  matches_prefix "$b" || continue
+
+  kb=$(du -sk "$d" 2>/dev/null | awk '{print $1}')
+  kb=${kb:-0}
+  age=$(( ( $(date +%s) - $(stat -f%m "$d" 2>/dev/null || date +%s) ) / 86400 ))
+
+  verdict=""; reason=""
+
+  if is_in_use "$b"; then
+    verdict="KEEP"; reason="open by a running process"
+  elif [ "$age" -lt "$MIN_AGE_DAYS" ]; then
+    verdict="KEEP"; reason="touched < ${MIN_AGE_DAYS}d ago"
+  elif is_ci_cache "$b"; then
+    if [ "$ci_busy" -eq 1 ]; then
+      verdict="KEEP"; reason="CI job running"
+    else
+      verdict="DELETE"; reason="stale cache, regenerated on next build"
+    fi
+  elif git -C "$d" rev-parse --git-dir >/dev/null 2>&1 && ! is_vendor_checkout "$d"; then
+    if git_is_collectable "$d"; then
+      verdict="DELETE"; reason="checkout clean, commits exist upstream"
+    else
+      verdict="KEEP"; reason="uncommitted or unpushed work"
+    fi
+  else
+    verdict="KEEP"; reason="not a repo and not a known cache"
+  fi
+
+  printf "%-9s %8s %4dd  %-42s %s\n" "$verdict" "$(human "$kb")" "$age" "$b" "$reason"
+  if [ "$verdict" = "DELETE" ]; then
+    FREED=$((FREED + kb)); DEL_LIST+=("$d")
+  else
+    KEPT=$((KEPT + kb))
+  fi
+done
+
+echo
+echo "DELETE  ${#DEL_LIST[@]} dirs, $(human "$FREED")"
+echo "KEEP    $(human "$KEPT")"
+
+if [ "$APPLY" -eq 0 ]; then
+  echo
+  echo "dry run. re-run with --apply to act."
+  exit 0
+fi
+
+if [ "${#DEL_LIST[@]}" -gt 0 ]; then
+  for d in "${DEL_LIST[@]}"; do rm -rf "$d"; done
+fi
+echo "done."

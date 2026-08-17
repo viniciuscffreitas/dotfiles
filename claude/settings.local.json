@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm cache *)",
+      "Bash(uv cache *)",
+      "Bash(pnpm store *)",
+      "Bash(yarn cache *)",
+      "Bash(pod cache *)",
+      "Bash(xcrun simctl *)"
+    ]
+  }
+}
