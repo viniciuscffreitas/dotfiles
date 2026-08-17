@@ -1,27 +1,30 @@
 # /sync
 
-Scans the current codebase, discovers conventions, and updates the project context.
+Refresh repo context for the current session.
 
-## Usage
+This is not a deployment/sync command. It is a "where are we?" command.
 
+## Instructions
+
+Run these checks in order, then summarize the useful context in plain language.
+
+```bash
+pwd
+git status --short --branch
+git branch --show-current
+git log --oneline --decorate -10
+git diff --stat
+git diff --name-only
+find .. -maxdepth 2 \( -name AGENTS.md -o -name CLAUDE.md -o -name ".agentflow" \) -print
 ```
-/sync
-```
 
-## What it does
+Then report:
 
-1. **Stack detection** — identifies languages, frameworks, package managers
-2. **Convention discovery** — naming patterns, directory structure, import style
-3. **Test discovery** — test frameworks, existing test patterns, current coverage
-4. **Dependency audit** — key dependencies and their versions
-5. **Context update** — Claude uses discovered conventions for the rest of the session
+- current repo and branch
+- uncommitted work
+- recent commits
+- files changed in this session/branch
+- active project policy/config files
+- what you now believe the next task context is
 
-## When to use
-
-- First session in an unfamiliar project
-- After significant structural changes to the project
-- When Claude is making decisions inconsistent with the project
-
-## Output
-
-Summary of discovered conventions available as session context.
+Do not dump huge command output unless Vini asks. Compress aggressively.
