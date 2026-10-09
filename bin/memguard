@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# memguard — memory-pressure watchdog for a 16 GB MacBook that runs many agents.
+#
+# macOS has no per-process memory cap that works for GUI apps, Docker VMs or
+# node/java daemons. What it does have is a single truthful signal, the kernel
+# pressure level (the same one Activity Monitor colours green/yellow/red):
+#   kern.memorystatus_vm_pressure_level: 1 normal, 2 warning, 4 critical
+# This script polls it from launchd every 30 s and, instead of guessing which
+# process to kill, tells the human what is eating RAM and lets them choose.
+#
+#   warning  -> one macOS notification per COOLDOWN with the top consumers
+#   critical -> a blocking dialog listing the top consumers, with a button per
+#               item to quit it (graceful first, SIGKILL after 5 s)
+#
+# Nothing is ever killed without a click. The only automatic action is the
+# `memguard status` line written to the log so the history is auditable.
+#
+# Usage: memguard            one poll (what launchd runs)
+#        memguard status     print the current picture and exit
+#        memguard test       force the critical dialog with live data
+
+set -u
+LOG="$HOME/Library/Logs/memguard.log"
+STATE="/tmp/memguard.$(id -u)"
+COOLDOWN_WARN=300      # seconds between warning notifications
+COOLDOWN_CRIT=120      # seconds between critical dialogs
+SWAP_PCT_CRIT=85       # swap this full counts as critical even at level 2
+TOP_N=6
+
+mkdir -p "$STATE"
+now=$(date +%s)
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+
+pressure=$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null || echo 1)
+swap_line=$(sysctl -n vm.swapusage)
+swap_total=$(echo "$swap_line" | sed -E 's/.*total = ([0-9.]+)M.*/\1/')
+swap_used=$(echo "$swap_line" | sed -E 's/.*used = ([0-9.]+)M.*/\1/')
+swap_pct=0
+if [ "${swap_total%.*}" -gt 0 ] 2>/dev/null; then
+  swap_pct=$(awk -v u="$swap_used" -v t="$swap_total" 'BEGIN{printf "%d", u*100/t}')
+fi
+free_pct=$(memory_pressure 2>/dev/null | awk -F': ' '/free percentage/{gsub(/%/,"",$2); print $2}')
+
+# Top consumers grouped by a human-readable label. RSS understates Docker's VM
+# and anything compressed, so the Docker VM is reported with its configured
+# size when the daemon is up.
+top_list() {
+  ps -eo rss=,pid=,comm= | awk '
+    {
+      rss=$1; pid=$2; $1=""; $2=""; cmd=substr($0,3)
+      n=split(cmd,parts,"/"); base=parts[n]
+      if (cmd ~ /Virtualization\.VirtualMachine/) label="Docker VM (ver `docker info`)"
+      else if (base=="claude") label="claude (sessão " pid ")"
+      else if (base=="java") label="java " pid
+      else if (base=="node") label="node " pid
+      else if (cmd ~ /\.app\//) { match(cmd,/[^\/]+\.app/); label=substr(cmd,RSTART,RLENGTH-4) }
+      else label=base
+      sum[label]+=rss
+    }
+    END { for (l in sum) printf "%d\t%s\n", sum[l]/1024, l }' \
+  | sort -rn | head -n "$TOP_N"
+}
+
+pretty_top() { top_list | awk -F'\t' '{printf "%5d MB  %s\n", $1, $2}'; }
+
+status_line="pressure=$pressure swap=${swap_used%.*}/${swap_total%.*}M (${swap_pct}%) free=${free_pct:-?}%"
+
+if [ "${1:-}" = "status" ]; then
+  echo "$status_line"; pretty_top; exit 0
+fi
+
+level=normal
+if [ "$pressure" -ge 4 ] || [ "$swap_pct" -ge "$SWAP_PCT_CRIT" ]; then level=critical
+elif [ "$pressure" -ge 2 ]; then level=warning; fi
+[ "${1:-}" = "test" ] && level=critical
+
+log "$status_line level=$level"
+[ "$level" = normal ] && exit 0
+
+stamp="$STATE/last-$level"
+last=$(cat "$stamp" 2>/dev/null || echo 0)
+cool=$COOLDOWN_WARN; [ "$level" = critical ] && cool=$COOLDOWN_CRIT
+if [ "${1:-}" != "test" ] && [ $((now - last)) -lt "$cool" ]; then exit 0; fi
+echo "$now" > "$stamp"
+
+top=$(pretty_top)
+
+if [ "$level" = warning ]; then
+  osascript -e "display notification \"$(echo "$top" | head -3 | tr '\n' ' ')\" with title \"memguard: memória em aviso\" subtitle \"$status_line\"" >/dev/null 2>&1
+  exit 0
+fi
+
+# critical: blocking dialog, one button per top item plus "Ignorar".
+# osascript dialogs take at most 3 buttons, so use a chooser list instead.
+choice=$(osascript <<EOF 2>/dev/null
+set items to paragraphs of "$(echo "$top" | sed 's/"/\\"/g')"
+set picked to choose from list items with title "memguard: memória CRÍTICA" with prompt "$status_line" & return & "Escolha o que fechar (Cancelar = ignorar por ${COOLDOWN_CRIT}s):" OK button name "Fechar" cancel button name "Ignorar"
+if picked is false then return ""
+return item 1 of picked
+EOF
+)
+[ -z "$choice" ] && { log "critical dialog dismissed"; exit 0; }
+
+# Map the chosen line back to pids.
+label=$(echo "$choice" | sed -E 's/^ *[0-9]+ MB  //')
+case "$label" in
+  "Docker VM"*) log "user chose Docker: quitting Docker Desktop"; osascript -e 'quit app "Docker Desktop"' >/dev/null 2>&1; osascript -e 'quit app "Docker"' >/dev/null 2>&1 ;;
+  "claude (sessão "*|"java "*|"node "*)
+    pid=$(echo "$label" | grep -oE '[0-9]+' | tail -1)
+    log "user chose $label: TERM $pid"; kill -TERM "$pid" 2>/dev/null; sleep 5
+    kill -0 "$pid" 2>/dev/null && { kill -KILL "$pid" 2>/dev/null; log "KILL $pid"; } ;;
+  *)
+    log "user chose app $label: graceful quit"; osascript -e "quit app \"$label\"" >/dev/null 2>&1 ;;
+esac
+exit 0

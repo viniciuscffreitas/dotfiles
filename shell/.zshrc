@@ -58,3 +58,21 @@ export ATRIUM_CODEX_TOKEN=atr_4702b6e7dc8841e5b004a069dc7bc2c7a2099703c27d426bb5
 # transcript. Shells nao interativos (claude -p real child) nao leem este arquivo,
 # entao child sessions legitimas continuam sem gravar. Remover a linha reverte.
 unset CLAUDE_CODE_CHILD_SESSION
+
+# Added by cua-driver-rs installer — see https://github.com/trycua/cua
+export PATH="/Users/vini/.local/bin:$PATH"
+eval "$(mise activate zsh)"
+
+# ~/bin (launcher j3ultimate)
+export PATH="$HOME/bin:$PATH"
+
+# ferramentas locais (memguard, heavy-run)
+export PATH="$HOME/dotfiles/bin:$PATH"
+
+# CX53: entra direto na sessão tmux persistente
+cx()  { mosh cx53ts -- .local/bin/work "${1:-home}"; }   # VPS via mosh+Tailscale; cx minecraft
+cxs() { ssh -t cx53ts .local/bin/work "${1:-home}"; }   # fallback ssh
+alias mc="cx minecraft"
+
+# CX: escolha compartilhada de agente
+source "$HOME/Developer/cx-harness/mac-shell.zsh"

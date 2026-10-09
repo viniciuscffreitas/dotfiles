@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""heavy-bench — find the largest number of concurrent heavy jobs this Mac takes
+before it starts to thrash, by measurement instead of by guess.
+
+macOS has no per-process memory cap, so the only tunable that matters is how many
+heavy jobs run at once (HEAVY_SLOTS in heavy-run). This tool ramps that number up
+and, at each level, records the three things that decide whether the machine is
+still usable:
+
+  swap-in rate     pages read back from swap per second. This is thrashing itself:
+                   the machine is re-reading memory it had to evict. Near zero is
+                   healthy; sustained thousands of pages per second is a freeze.
+  pressure level   kern.memorystatus_vm_pressure_level: 1 normal, 2 warning,
+                   4 critical. The same signal Activity Monitor colours.
+  probe latency    wall time of a small fixed foreground task, run repeatedly
+                   while the load is on. This is the proxy for "does the machine
+                   still feel responsive". Reported as a multiple of its own
+                   idle baseline.
+
+The ramp stops by itself at the first level that crosses a stop rule, so it finds
+the edge without going over it. Jobs are killed and the machine is allowed to
+settle between levels.
+
+  heavy-bench                      synthetic jobs, ~1.5 GB each, up to 6 at once
+  heavy-bench --job-mb 2500        model a heavier build
+  heavy-bench --max 4              stop the ramp earlier
+  heavy-bench --cmd 'flutter build ios --debug'   measure a real build instead
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shlex
+import signal
+import statistics
+import subprocess
+import sys
+import time
+
+PAGE = 16384
+IDLE_SETTLE = 45          # seconds to wait for the machine to settle between levels
+SAMPLE = 1.0              # seconds between samples
+# Stop rules. Crossing any one of these means this level is already too much.
+MAX_SWAPIN_PPS = 2000     # pages/s read back from swap, sustained
+MAX_PROBE_RATIO = 2.5     # foreground task this many times slower than idle
+MAX_PRESSURE = 4          # kernel says critical
+
+PROBE = (
+    "import time;b=bytearray(32*1024*1024)\n"
+    "for i in range(0,len(b),16384): b[i]=1\n"
+    "s=0\n"
+    "for i in range(400000): s+=i*i\n"
+)
+
+JOB = (
+    "import sys,time\n"
+    "mb=int(sys.argv[1]); dur=float(sys.argv[2])\n"
+    "b=bytearray(mb*1024*1024)\n"
+    "end=time.time()+dur; n=0\n"
+    "while time.time()<end:\n"
+    "    for i in range(0,len(b),16384): b[i]=(b[i]+1)&0xff\n"
+    "    n+=1\n"
+)
+
+
+def page_size() -> int:
+    out = subprocess.run(["vm_stat"], capture_output=True, text=True).stdout
+    m = re.search(r"page size of (\d+) bytes", out)
+    return int(m.group(1)) if m else PAGE
+
+
+def vm_counters() -> dict[str, int]:
+    out = subprocess.run(["vm_stat"], capture_output=True, text=True).stdout
+    d = {}
+    for line in out.splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            v = v.strip().rstrip(".")
+            if v.isdigit():
+                d[k.strip()] = int(v)
+    return d
+
+
+def pressure() -> int:
+    try:
+        return int(subprocess.run(
+            ["sysctl", "-n", "kern.memorystatus_vm_pressure_level"],
+            capture_output=True, text=True).stdout.strip())
+    except ValueError:
+        return 1
+
+
+def swap_used_mb() -> tuple[float, float]:
+    s = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True).stdout
+    used = float(re.search(r"used = ([0-9.]+)M", s).group(1))
+    total = float(re.search(r"total = ([0-9.]+)M", s).group(1))
+    return used, total
+
+
+def free_pct() -> int:
+    out = subprocess.run(["memory_pressure"], capture_output=True, text=True).stdout
+    m = re.search(r"free percentage: (\d+)", out)
+    return int(m.group(1)) if m else -1
+
+
+def run_probe() -> float:
+    t = time.monotonic()
+    subprocess.run([sys.executable, "-c", PROBE], capture_output=True)
+    return time.monotonic() - t
+
+
+def baseline_probe(n: int = 5) -> float:
+    run_probe()  # warm the interpreter cache
+    return statistics.median(run_probe() for _ in range(n))
+
+
+def settle(deadline: float) -> None:
+    """Wait until pressure is back to normal and swap-ins have stopped."""
+    ps = page_size()
+    end = time.monotonic() + deadline
+    while time.monotonic() < end:
+        a = vm_counters().get("Swapins", 0)
+        time.sleep(2)
+        b = vm_counters().get("Swapins", 0)
+        if pressure() == 1 and (b - a) * ps / 2 / 1e6 < 5:  # < 5 MB/s from swap
+            return
+    print("  (a máquina não voltou ao normal no tempo de espera; seguindo mesmo assim)")
+
+
+def spawn_jobs(n: int, job_mb: int, dur: float, cmd: str | None) -> list[subprocess.Popen]:
+    procs = []
+    for _ in range(n):
+        if cmd:
+            p = subprocess.Popen(shlex.split(cmd), stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+        else:
+            p = subprocess.Popen([sys.executable, "-c", JOB, str(job_mb), str(dur)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+        procs.append(p)
+    return procs
+
+
+def kill_jobs(procs: list[subprocess.Popen]) -> None:
+    for p in procs:
+        if p.poll() is None:
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+    time.sleep(2)
+    for p in procs:
+        if p.poll() is None:
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    for p in procs:
+        try:
+            p.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def peak_rss_mb(procs: list[subprocess.Popen]) -> float:
+    pids = [str(p.pid) for p in procs if p.poll() is None]
+    if not pids:
+        return 0.0
+    out = subprocess.run(["ps", "-o", "rss=", "-p", ",".join(pids)],
+                         capture_output=True, text=True).stdout.split()
+    return max((int(x) / 1024 for x in out if x.isdigit()), default=0.0)
+
+
+def level(n: int, job_mb: int, dur: float, cmd: str | None, base: float, ps: int) -> dict:
+    print(f"\n== {n} job(s) simultâneo(s)")
+    before = vm_counters()
+    t0 = time.monotonic()
+    procs = spawn_jobs(n, job_mb, dur, cmd)
+    swapin_pps, probes, pressures, rss = [], [], [], []
+    last = before.get("Swapins", 0)
+    last_t = t0
+    try:
+        while time.monotonic() - t0 < dur:
+            time.sleep(SAMPLE)
+            now = time.monotonic()
+            cur = vm_counters().get("Swapins", 0)
+            dt = now - last_t
+            if dt > 0:
+                swapin_pps.append((cur - last) / dt)
+            last, last_t = cur, now
+            pressures.append(pressure())
+            rss.append(peak_rss_mb(procs))
+            probes.append(run_probe())
+            if pressures[-1] >= MAX_PRESSURE:
+                print("  pressão CRÍTICA, interrompendo este nível agora")
+                break
+            if len(swapin_pps) >= 3 and statistics.mean(swapin_pps[-3:]) > MAX_SWAPIN_PPS * 3:
+                print("  swap-in violento, interrompendo este nível agora")
+                break
+    finally:
+        kill_jobs(procs)
+
+    used, total = swap_used_mb()
+    r = {
+        "n": n,
+        "swapin_pps": statistics.mean(swapin_pps) if swapin_pps else 0.0,
+        "swapin_peak": max(swapin_pps) if swapin_pps else 0.0,
+        "probe_ratio": (statistics.median(probes) / base) if probes else 1.0,
+        "probe_p95": (max(probes) / base) if probes else 1.0,
+        "pressure_max": max(pressures) if pressures else 1,
+        "peak_rss": max(rss) if rss else 0.0,
+        "swap_pct": (used / total * 100) if total else 0.0,
+        "free_pct": free_pct(),
+    }
+    mbps = r["swapin_pps"] * ps / 1e6
+    print(f"  swap-in médio {mbps:6.1f} MB/s   pressão máx {r['pressure_max']}"
+          f"   foreground {r['probe_ratio']:.2f}x (pior {r['probe_p95']:.2f}x)"
+          f"   RSS/job {r['peak_rss']:.0f} MB   swap {r['swap_pct']:.0f}%   livre {r['free_pct']}%")
+    return r
+
+
+def verdict(r: dict, ps: int) -> tuple[bool, str]:
+    if r["pressure_max"] >= MAX_PRESSURE:
+        return False, "pressão crítica"
+    if r["swapin_pps"] > MAX_SWAPIN_PPS:
+        return False, f"thrashing: {r['swapin_pps'] * ps / 1e6:.0f} MB/s lidos do swap"
+    if r["probe_ratio"] > MAX_PROBE_RATIO:
+        return False, f"foreground {r['probe_ratio']:.1f}x mais lento"
+    return True, "ok"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--job-mb", type=int, default=1500, help="memória residente por job sintético")
+    ap.add_argument("--max", type=int, default=6, help="maior nível de paralelismo a testar")
+    ap.add_argument("--dur", type=float, default=20.0, help="segundos por nível")
+    ap.add_argument("--cmd", default=None, help="comando real a medir em vez do job sintético")
+    a = ap.parse_args()
+
+    ps = page_size()
+    used, total = swap_used_mb()
+    print(f"RAM 16 GiB · página {ps} B · swap {used:.0f}/{total:.0f} MB · livre {free_pct()}%"
+          f" · pressão {pressure()}")
+    print("Feche o que não estiver usando antes de medir: o resultado vale para o estado atual da máquina.")
+    print("\nCalibrando a tarefa de foreground sem carga...")
+    base = baseline_probe()
+    print(f"  baseline {base * 1000:.0f} ms")
+
+    rows, best = [], 0
+    for n in range(1, a.max + 1):
+        settle(IDLE_SETTLE) if n > 1 else None
+        r = level(n, a.job_mb, a.dur, a.cmd, base, ps)
+        ok, why = verdict(r, ps)
+        rows.append((r, ok, why))
+        if ok:
+            best = n
+        else:
+            print(f"  VEREDITO: {n} é demais ({why})")
+            break
+        print("  VEREDITO: ainda saudável")
+
+    print("\n" + "=" * 78)
+    print(f"{'jobs':>4} {'swap-in MB/s':>13} {'pressão':>8} {'foreground':>11} {'RSS/job MB':>11} {'swap %':>7}  veredito")
+    for r, ok, why in rows:
+        print(f"{r['n']:>4} {r['swapin_pps'] * ps / 1e6:>13.1f} {r['pressure_max']:>8}"
+              f" {r['probe_ratio']:>10.2f}x {r['peak_rss']:>11.0f} {r['swap_pct']:>7.0f}"
+              f"  {'ok' if ok else why}")
+    print("=" * 78)
+    if best == 0:
+        print("Nem 1 job passou. A máquina já está sem folga: feche coisas e meça de novo.")
+    else:
+        print(f"HEAVY_SLOTS={best} é o maior paralelismo saudável com a máquina como está agora.")
+        if best == a.max:
+            print(f"O teto não foi encontrado: nada quebrou até {a.max}. Rode com --max maior.")
+        print(f"Aplicar: launchctl setenv HEAVY_SLOTS {best}  (e exportar no ~/.zshrc)")
+    print("Medido com job sintético." if not a.cmd else f"Medido com: {a.cmd}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\ninterrompido")
+        sys.exit(130)

@@ -29,10 +29,12 @@ Ao propor solução: cheque se existe versão mais simples que resolve o mesmo p
 - Pedido "gera draft" / "rascunho" / "sem enviar" → SEMPRE usar `slack_send_message_draft`, NUNCA `slack_send_message`
 - Sem confirmação explícita ("envia agora" / "manda direto"), é sempre draft
 - Quebrar essa regra = mensagem irreversível para terceiros
+- Enforced por `hooks/slack_draft_guard.py`: `slack_send_message` é bloqueado sem autorização na conversa
 
 ## Linear identity
-- Comentários em tickets de teams onde o orquestrador (Juan, Symphony bot) atua: postar via Linear API com a key do bot, não com a key pessoal do Vini
+- Postar como **conta pessoal do Vini** via Linear MCP `save_comment`. A key do bot Juan/Symphony está deprecada (2026-06-20) — nunca rotear por ela
 - Conteúdo em EN, threaded sob comentário stakeholder quando aplicável, asset inline (não link), sem hifens, sem markdown decorativo
+- Procedimento canônico (formato, screenshot upload, threading): skill `vini-post-linear`. Enforced por `hooks/linear_comment_gate.py` — se bloquear, reescreva; não use o bypass `LINEAR_POST_OK=1` sem Vini pedir
 
 ## "Curto/direto/conciso" = HARD CAP
 Quando Vini pede mensagem "curto", "direto", "conciso", "objetivo", "menos linhas", "bem curto mesmo":
@@ -97,6 +99,10 @@ Irreversible data loss never auto-executes.
 2. Full build (if applicable)
 3. Complete test suite
 
+`hooks/verification_before_completion.py` scans the final message for claims of
+done/merged/passing that carry no command output, sha, or file path. If it fires,
+the claim was unproven — go run the check instead of rewording it.
+
 ### Code Quality
 - File length limits configurable per project
 - Default: >400 lines warning, >600 lines mandatory split
@@ -106,46 +112,35 @@ Irreversible data loss never auto-executes.
 ### Issue Tracker (agnostic)
 - Detect the project tracker from the repo itself (Linear, GitHub Issues, Jira, TODO.md) before drafting anything
 - Review Gate generates tech debt drafts in the tracker's native format
-- NEVER create issues automatically — always present drafts for manual approval
+- Ticket creation is the tenant's call, per origin: where the tenant manifest does not say,
+  present a draft and let the human file it. A tenant that opted in files straight to Triage,
+  where the human accepts or declines in the tracker's own inbox
 - If no tracker detected: plaintext drafts to stdout
 
-### Destructive Operations
-Any delete, reset, migration, or irreversible overwrite:
--> Stop and ask for explicit written confirmation before running it
-
-### Prod safety — momease stack (durable)
-Never execute these without explicit written authorization in the chat
-("aprovo deploy prod" or equivalent) WITHIN THE SAME SESSION.
+## Prod safety — momease stack (durable)
+Never execute a production-facing command without explicit written authorization
+in the chat ("aprovo deploy prod" or equivalent) WITHIN THE SAME SESSION.
 Authorization scope is the specific command quoted, not broader.
 Re-authorization required for each execution.
 
-Forbidden without explicit per-execution authorization:
+The canonical blocklist lives in `~/Developer/vini-personal/hooks/momease_prod_guard.py`,
+which enforces it mechanically. It covers prod `firebase deploy` (including a bare
+`firebase deploy` with no `--project`), `v*`/`preview/v*` tags in mom-ease,
+`distribute-*-production*` workflows, `confirm=DEPLOY_PROD`, `gh release create`,
+`gh pr merge --base main` on momease repos, `npm run deploy|release`, and prod
+fastlane lanes. Do not duplicate that list here — it drifts. Read the hook when
+you need the exact set.
 
-- `firebase deploy --project articulate-rain-459622-r2 ...` — backend prod
-- `firebase deploy --project momease-prod ...` (any variant pointing at prod) — theme-manager prod
-- `firebase deploy` with no `--project` flag (current project may be prod)
-- `git tag v<version>` or `git tag preview/v<version>` in mom-ease + push — triggers `distribute-*-production*.yml` on self-hosted runner -> TestFlight/App Store/Play Store submit
-- `gh workflow run distribute-ios-production.yml` (and `-preview` variant)
-- `gh workflow run distribute-android-production.yml` (and `-preview` variant)
-- `gh workflow run deploy-functions.yml -f confirm=DEPLOY_PROD` (momease-backend)
-- `gh workflow run deploy.yml -f confirm=DEPLOY_PROD` (mom-ease-theme-manager)
-- `gh release create ...` for any momease repo
-- `gh pr merge ... --base main` for `momease-backend` or `mom-ease-theme-manager` (their `main` is prod-facing)
-- `gh pr merge ... --base main` for `mom-ease` (release PR develop->main)
-- Any `npm run deploy` / `npm run release` in momease-backend or mom-ease-theme-manager
-- `fastlane <prod_lane>` / `fastlane submit_only` in mom-ease ios/android
-- Editing files under `momease-backend/firestore.rules` AND deploying (`firebase deploy --only firestore:rules`)
+When uncertain whether a command will hit prod: ASK FIRST. The autonomy rule
+above ("act without asking") does NOT override this section. Prod safety beats
+autonomy, and never work around the guard.
 
-When uncertain whether a command will hit prod: ASK FIRST. The
-autonomy rule above ("act without asking") does NOT override this
-section. Prod safety beats autonomy.
+Staging/dev deploys run without prompt: `--project momease-dev` or `momease-e2e`,
+`git tag staging/v...` pushed **by name** (`git push origin staging/v...`), and
+staging-only workflows. `git push --tags` is blocked even for a staging tag,
+because it sweeps every local tag including prod ones — push the tag by name.
 
-Staging/dev deploys are allowed without prompt:
-- `firebase deploy --project momease-dev ...`
-- `git tag staging/v...` + push (triggers `distribute-*.yml` staging)
-- `gh workflow run` on staging-only workflows
-
-### Frontend & UX
+## Frontend & UX
 - **Design System first**: always consult existing tokens, components, and patterns before creating new ones
 - **Visual silence**: every element on screen must justify its presence — remove noise, don't add it
 - **Low cognitive load**: clear hierarchy, one primary action per screen, progressive disclosure
@@ -154,22 +149,53 @@ Staging/dev deploys are allowed without prompt:
 - **Crafted with care**: polished micro-interactions (smooth transitions, tactile feedback, purposeful animations — not decorative)
 - **Frontend Gate mandatory**: before coding UI, invoke `frontend-design:frontend-design`
 
-### Review Gate
+## Review Gate
 - Before declaring DONE on any non-trivial task, run `devloop:review`
 - Review validates logic, quality, regressions, and design system adherence
 - Issues found in review: fix before proceeding
 
-### Context Discipline
+## Context Discipline
 Before exploring any codebase, explicitly declare which files are relevant to the task. Use Grep before Read. Never read entire directories to orient yourself.
 
 For code *structure* searches (function calls, definitions, usages), prefer `sg` (ast-grep) via Bash — it is installed globally. `Grep` remains the right tool for text, comments, docs, and configs.
 
 For a library or framework's current API, usage, or docs, query `context7` (MCP) instead of training memory — these move fast and memory goes stale. Skip it for stdlib and stable basics you already know; reach for it on fast-moving libs, recent releases, or when an API call looks off.
 
-### No Explore subagent
+## Matt Pocock skills — quando usar, quando não
+
+Plugin `mattpocock-skills` (25 skills, ~1.6k tok always-on). Uso diário: **`/grill-me`,
+`/wayfinder`, `/to-tickets`** — preparação de ticket, antes do devloop, sempre
+invocadas manualmente. Elas puxam `grilling`, `domain-modeling`, `research` e
+`prototype` como dependências; isso é esperado, não é escopo crescendo.
+
+**Arbitragem com o devloop.** Trabalho ticketado roda no devloop. Onde as duas
+cobrem o mesmo terreno, vence o devloop:
+- `diagnosing-bugs` → archetype bugfix
+- `code-review` → `devloop:review` (e `vini-2nd-opinion` para segunda opinião)
+- `tdd` → o ciclo RED/GREEN/REFACTOR já definido acima
+- `implement` / `triage` → archetypes feature e intake
+- `handoff` → `scripts/task_cli.py resume` + `hooks/task_hook.py` do devloop já
+  fazem isso automaticamente
+
+**Nunca rodar `/grill-with-docs` dentro de `~/Developer/devloop`.** Ele reescreve
+glossário, e o CONTEXT.md de lá tem formato obrigatório (`_Canonical_:`,
+`_Industry_:`, `_Avoid_:`) validado por `tests/test_structure.py`. A reescrita
+quebra a suite. Nos outros repos é livre.
+
+**`/to-tickets` e `/wayfinder` quebram trabalho, não publicam.** A publicação sai
+pela skill `vini-post-linear`, ou por `vini-kotic-flow` no mom-ease — onde mover
+card exige `POST /agent-actions/set-status`, porque `PATCH /issues/:id` pula o
+gate de produção silenciosamente.
+
+**`/setup-matt-pocock-skills`**: já rodado nos 3 repos MomEase (2026-09-15), com o
+Chaos como tracker, triage por status e domain docs compartilhados. Não rode de novo
+em outro repo sem o Vini pedir, porque o padrão da skill é GitHub e reescreve o
+`CLAUDE.md`.
+
+## No Explore subagent
 The `Agent(Explore)` subagent is DENIED globally in `settings.json` — do not try to invoke it, do not suggest enabling it. Exploration happens in the main agent using `Grep`/`Glob` first, then targeted `Read`. Rationale: Explore rediscovers the repo on every call and burns 100k+ tokens for lookups that `grep` resolves in seconds. If a task feels too broad for direct tools, narrow it (declare hypotheses, grep for symbols) instead of reaching for a broad scanner. Other subagents (`general-purpose`, `Plan`, review agents, etc.) remain available.
 
-### Subagents
+## Subagents
 - Subagents DO NOT spawn other subagents
 - All delegation flows through the Main Agent
 - For independent parallel tasks: dispatch several `Agent` calls in a single message so they run concurrently

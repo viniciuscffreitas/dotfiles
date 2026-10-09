@@ -1,0 +1,6 @@
+# runtime/secrets
+.credentials.json
+daemon.*
+state/
+uploads/
+feedback/

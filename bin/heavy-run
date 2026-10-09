@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# heavy-run — run a memory-hungry command under a machine-wide throttle instead
+# of refusing it. The "underclock" for a 16 GB Mac running several agents: the
+# work always happens, it just cannot all happen at once.
+#
+# Three mechanisms, each the standard tool for its job:
+#
+#   1. Concurrency: GNU parallel's `sem`, a named counting semaphore. At most
+#      $HEAVY_SLOTS (default 2) heavy jobs run on the whole machine; the rest
+#      queue and start when a slot frees. `sem --fg` keeps the job in the
+#      foreground, so stdout, stderr and the exit code pass straight through.
+#   2. Scheduling: `taskpolicy -c utility`, Apple's own QoS clamp. The job cedes
+#      the performance cores and disk priority to whatever the human is doing.
+#      Slower build, responsive machine.
+#   3. Memory: per-runtime heap ceilings via environment (Node, Java, Gradle).
+#      This is the only real memory cap available, because macOS refuses to set
+#      RLIMIT_AS / RLIMIT_DATA / RLIMIT_RSS at all -- there is no per-process
+#      memory limit on this OS. A hard RAM cap needs a VM (Docker --memory).
+#
+# As a safety net it also holds a job from starting while the kernel reports
+# critical pressure or swap above $HEAVY_SWAP_PCT, for at most $HEAVY_MAX_WAIT
+# seconds, then runs it anyway. Nothing is ever refused.
+#
+# Usage: heavy-run <script-file>      what mem_gate.py generates
+#        heavy-run -- <command...>    manual
+#        heavy-run status             who holds the slots right now
+
+# Measured on this machine with heavy-bench on 2026-09-12, jobs of 1.5 GB, with
+# Chrome and a java process already up (46% memory free at the start):
+#   jobs  swap-in   pressure  foreground slowdown  resident per job
+#      1   0 MB/s      1            1.10x             1509 MB
+#      2   1 MB/s      2            1.66x             1434 MB
+#      3   0 MB/s      2            2.29x              908 MB   <- jobs already squeezed
+#      4  53 MB/s      2            2.21x              903 MB   <- thrashing
+# So 3 is the ceiling before the machine reads memory back from swap, but at 3 the
+# foreground is already more than twice as slow and the jobs cannot keep their
+# pages resident. 2 is the setting where the machine still feels normal.
+# Re-measure whenever the baseline changes: `heavy-bench`.
+
+set -u
+export PATH="/opt/homebrew/bin:$PATH"
+# Precedence: environment beats the config file, which beats these defaults.
+_env_slots="${HEAVY_SLOTS:-}"; _env_swap="${HEAVY_SWAP_PCT:-}"; _env_wait="${HEAVY_MAX_WAIT:-}"
+# shellcheck source=/dev/null
+[ -r "$HOME/.config/heavy-run.conf" ] && . "$HOME/.config/heavy-run.conf"
+HEAVY_SLOTS="${_env_slots:-${HEAVY_SLOTS:-2}}"
+HEAVY_SWAP_PCT="${_env_swap:-${HEAVY_SWAP_PCT:-85}}"
+HEAVY_MAX_WAIT="${_env_wait:-${HEAVY_MAX_WAIT:-900}}"
+SEM_ID=heavy
+LOCKS="$HOME/.parallel/semaphores/id-$SEM_ID"
+
+if [ "${1:-}" = "status" ]; then
+  n=0
+  for f in "$LOCKS"/*@*; do
+    [ -e "$f" ] || continue
+    pid=${f##*/}; pid=${pid%%@*}; n=$((n+1))
+    printf 'ocupada  pid %-7s %s\n' "$pid" "$(ps -o command= -p "$pid" 2>/dev/null | head -c 120)"
+  done
+  printf '%d de %d vagas ocupadas\n' "$n" "$HEAVY_SLOTS"
+  exit 0
+fi
+
+if [ "${1:-}" = "--" ]; then shift; job=(taskpolicy -c utility "$@")
+else job=(taskpolicy -c utility bash "$1"); fi
+# sem takes the job as a single shell string, so quote every word exactly once.
+job_str=$(printf '%q ' "${job[@]}")
+
+pressure_bad() {
+  local lvl pct
+  lvl=$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null || echo 1)
+  pct=$(sysctl -n vm.swapusage | awk '{match($0,/total = [0-9.]+/);t=substr($0,RSTART+8,RLENGTH-8);match($0,/used = [0-9.]+/);u=substr($0,RSTART+7,RLENGTH-7);printf "%d",(t>0?u*100/t:0)}')
+  [ "$lvl" -ge 4 ] || [ "$pct" -ge "$HEAVY_SWAP_PCT" ]
+}
+
+start=$(date +%s); held=0
+while pressure_bad; do
+  [ $held -eq 0 ] && { echo "heavy-run: memória crítica ($(sysctl -n vm.swapusage)); segurando até aliviar, no máximo ${HEAVY_MAX_WAIT}s" >&2; held=1; }
+  [ $(( $(date +%s) - start )) -ge "$HEAVY_MAX_WAIT" ] && { echo "heavy-run: teto de espera atingido, rodando mesmo assim" >&2; break; }
+  sleep 5
+done
+
+# Heap ceilings. Only set when the caller has not already chosen one.
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
+export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:--Xmx2g}"
+export GRADLE_OPTS="${GRADLE_OPTS:--Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.workers.max=4}"
+
+if command -v sem >/dev/null 2>&1; then
+  mkdir -p "$HOME/.parallel"; : > "$HOME/.parallel/will-cite"
+  exec sem --id "$SEM_ID" -j "$HEAVY_SLOTS" --fg "$job_str"
+fi
+echo "heavy-run: GNU parallel (sem) ausente, rodando sem fila — instale com: brew install parallel" >&2
+exec "${job[@]}"

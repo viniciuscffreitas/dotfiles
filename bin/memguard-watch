@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# memguard-watch — wake memguard the moment free memory falls, instead of
+# waiting for its 30 s poll.
+#
+# A 30 s poll is fine for a slow drift and useless for a fast one: a build can
+# take the machine from comfortable to thrashing inside one interval. macOS ships
+# a blocking waiter for exactly this: `memory_pressure -w <percent-free>` returns
+# as soon as free memory reaches that percentage, and costs no CPU and under a
+# megabyte while it waits.
+#
+# Measured 2026-09-12: `-w 60` with 40% free returned in 0 s with exit 0; `-w 5`
+# stayed blocked at 0.0% CPU and 688 KB.
+#
+# What was tried first and does NOT work: a C daemon on
+# DISPATCH_SOURCE_TYPE_MEMORYPRESSURE. Real pressure took the kernel level from 1
+# to 2 twice while it was subscribed and running, and it received no event either
+# time. That API notifies a process about its own standing with the kernel, not
+# about the machine. Do not reach for it again for this job.
+#
+# The 30 s poll (com.vini.memguard) stays as the backstop for a level that is
+# already bad and never transitions.
+
+set -u
+THRESH="${MEMGUARD_WATCH_FREE_PCT:-20}"   # percent free that wakes us
+COOLDOWN="${MEMGUARD_WATCH_COOLDOWN:-30}" # seconds before arming again
+
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >&2; }
+log "watching for free memory at or below ${THRESH}%"
+
+while true; do
+  if memory_pressure -w "$THRESH" >/dev/null 2>&1; then
+    log "free memory hit ${THRESH}%, running memguard"
+    /Users/vini/dotfiles/bin/memguard
+  else
+    log "memory_pressure -w failed, backing off"
+    sleep 10
+  fi
+  sleep "$COOLDOWN"
+done
